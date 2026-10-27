@@ -24,15 +24,17 @@
   <TitleBar />
   <main>
     <Browser />
-    <div class="stage glass">
+    <!-- A fila é um menu lateral por cima do player (que continua visível e se desloca para a esquerda). -->
+    <div class="stage glass" class:queue-open={app.panel === "queue"}>
       {#if app.panel === "profile"}
         <Profile />
-      {:else if app.panel === "queue"}
-        <QueuePanel />
       {:else if app.panel === "friends"}
         <FriendsPanel />
       {:else}
         <NowPlaying />
+      {/if}
+      {#if app.panel === "queue"}
+        <QueuePanel />
       {/if}
     </div>
   </main>
@@ -77,12 +79,30 @@
   }
 
   .stage {
+    --drawer: min(380px, 46%);
+    position: relative;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    overflow: hidden;
   }
 
   .stage > :global(*) {
     flex: 1;
+  }
+
+  /* Com a fila aberta, o player se centraliza no espaço que sobrou à esquerda. */
+  .stage > :global(.now) {
+    transition: padding-right 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .stage.queue-open > :global(.now) {
+    padding-right: calc(var(--drawer) + 24px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage > :global(.now) {
+      transition: none;
+    }
   }
 </style>

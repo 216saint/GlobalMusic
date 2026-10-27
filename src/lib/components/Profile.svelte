@@ -2,6 +2,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import Copy from "@lucide/svelte/icons/copy";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import { api, errorMessage } from "$lib/api";
   import { app } from "$lib/app.svelte";
@@ -11,10 +14,25 @@
   import SourceIcon from "./SourceIcon.svelte";
 
   const REDIRECT_URI = "http://127.0.0.1:47823/login";
+  const DASHBOARD_URL = "https://developer.spotify.com/dashboard/create";
+  /** Client ID do Spotify: 32 caracteres hexadecimais. */
+  const CLIENT_ID_FORMAT = /^[0-9a-f]{32}$/i;
+
+  let copied = $state(false);
+
+  async function copyRedirect() {
+    await navigator.clipboard.writeText(REDIRECT_URI);
+    copied = true;
+    setTimeout(() => (copied = false), 2000);
+  }
+
+  // No navegador (demo) não existe o plugin do Tauri: abre numa aba.
+  const openDashboard = () => openUrl(DASHBOARD_URL).catch(() => window.open(DASHBOARD_URL, "_blank"));
 
   // Client ID próprio do Spotify: cota de requisições só da pessoa (ver ADR 0003).
   let savedClientId = $state<string | null>(null);
   let clientIdInput = $state("");
+  const clientIdValid = $derived(CLIENT_ID_FORMAT.test(clientIdInput.trim()));
   let clientIdMessage = $state<string | null>(null);
 
   let version = $state<string | null>(null);
@@ -44,7 +62,7 @@
     if (!a.connected) return "Não conectado";
     const who = a.displayName ? `Conectado como ${a.displayName}` : "Conectado";
     if (a.source !== "spotify" || a.premium === null) return who;
-    return a.premium ? `${who}, Premium` : `${who}, Free (o áudio vem do YouTube)`;
+    return `${who}, ${a.premium ? "Premium" : "Free"}`;
   }
 </script>
 
@@ -93,30 +111,55 @@
       <details class="advanced" open={savedClientId !== null || app.notice?.includes("muitas requisições")}>
         <summary>Spotify recusando por excesso de requisições?</summary>
         <p>
-          Por padrão, o GlobalMusic usa o mesmo Client ID de outros apps não oficiais do Spotify, e o Spotify divide o
-          limite de requisições entre todos eles. Com um Client ID seu, o limite passa a ser só seu.
+          O GlobalMusic usa um Client ID compartilhado com outros apps, e o Spotify divide o limite de requisições entre
+          todos. Se aparecer "muitas requisições", crie um Client ID só seu (leva uns 2 minutos).
         </p>
-        <ol>
-          <li>Entre em <strong>developer.spotify.com/dashboard</strong> com a sua conta e clique em <em>Create app</em>.</li>
-          <li>Em <em>Redirect URIs</em>, adicione <code>{REDIRECT_URI}</code>.</li>
-          <li>Marque <em>Web API</em> e <em>Web Playback SDK</em> e salve.</li>
-          <li>Copie o <em>Client ID</em> e cole abaixo.</li>
+        <p class="requirement">
+          Precisa de <strong>Spotify Premium</strong>: desde fevereiro de 2026 o Spotify só deixa conta Premium criar
+          Client ID. Quem é Free não precisa disto: continua usando o compartilhado, e as músicas tocam normalmente.
+        </p>
+        <ol class="steps">
+          <li>
+            <span>Abra o painel do Spotify (entre com a sua conta) e crie um app com qualquer nome.</span>
+            <button class="btn ghost small" type="button" onclick={openDashboard}>
+              <ExternalLink size={14} /> Abrir o painel do Spotify
+            </button>
+          </li>
+          <li>
+            <span>Em <em>Redirect URIs</em>, cole este endereço e clique em <em>Add</em>:</span>
+            <span class="copy-row">
+              <code>{REDIRECT_URI}</code>
+              <button class="btn ghost small" type="button" onclick={copyRedirect}>
+                <Copy size={14} /> {copied ? "Copiado" : "Copiar"}
+              </button>
+            </span>
+          </li>
+          <li><span>Em <em>Which API/SDKs</em>, marque <em>Web API</em> e <em>Web Playback SDK</em>, aceite os termos e salve.</span></li>
+          <li><span>Abra o app criado, copie o <em>Client ID</em> e cole aqui:</span></li>
         </ol>
         <form
           class="client-id"
           onsubmit={(e) => {
             e.preventDefault();
-            void saveClientId(clientIdInput);
+            if (clientIdValid) void saveClientId(clientIdInput.trim());
           }}
         >
           <label class="sr-only" for="client-id">Client ID do Spotify</label>
-          <input id="client-id" placeholder="32 caracteres, ex.: 1a2b3c…" bind:value={clientIdInput} spellcheck="false" />
-          <button class="btn" type="submit">Salvar</button>
+          <input
+            id="client-id"
+            placeholder="32 letras e números, ex.: 1a2b3c…"
+            bind:value={clientIdInput}
+            spellcheck="false"
+            aria-invalid={clientIdInput.trim() !== "" && !clientIdValid}
+          />
+          <button class="btn" type="submit" disabled={!clientIdValid}>Salvar</button>
           {#if savedClientId}
-            <button class="btn ghost" type="button" onclick={() => saveClientId(null)}>Usar o padrão</button>
+            <button class="btn ghost" type="button" onclick={() => saveClientId(null)}>Usar o compartilhado</button>
           {/if}
         </form>
-        {#if clientIdMessage}
+        {#if clientIdInput.trim() !== "" && !clientIdValid}
+          <p class="hint invalid" role="status">O Client ID tem 32 letras (a–f) e números. Confira se copiou inteiro.</p>
+        {:else if clientIdMessage}
           <p class="hint" role="status">{clientIdMessage}</p>
         {/if}
       </details>
@@ -275,6 +318,55 @@
     border-radius: 6px;
     background: rgba(0, 0, 0, 0.25);
     user-select: all;
+  }
+
+  .requirement {
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--tint-1);
+    color: var(--ink-2);
+  }
+
+  .steps {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0;
+    padding-left: 20px;
+  }
+
+  .steps li span {
+    display: block;
+  }
+
+  .steps li .btn {
+    margin-top: 6px;
+  }
+
+  .copy-row {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .copy-row .btn {
+    margin-top: 0 !important;
+  }
+
+  .btn.small {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font-size: 12.5px;
+  }
+
+  .client-id input[aria-invalid="true"] {
+    border-color: rgba(255, 90, 90, 0.6);
+  }
+
+  .hint.invalid {
+    color: #ffb4b4;
   }
 
   .client-id {

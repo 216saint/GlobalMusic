@@ -53,6 +53,44 @@ impl Identity {
             Identity::Spotify { .. } => "Spotify",
         }
     }
+    /// Colunas onde guardamos o nome e a foto que este login tem lá no serviço.
+    fn profile_columns(&self) -> (&'static str, &'static str) {
+        match self {
+            Identity::Discord { .. } => ("discord_name", "discord_avatar"),
+            Identity::Spotify { .. } => ("spotify_name", "spotify_avatar"),
+        }
+    }
+}
+
+/// Nome e foto de um login vinculado (para "usar o perfil do Discord/Spotify").
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedProfile {
+    pub provider: &'static str,
+    pub name: String,
+    pub avatar_url: Option<String>,
+}
+
+/// Guarda o nome e a foto que a pessoa tem no serviço (a cada login: eles podem ter mudado lá).
+async fn remember_profile(state: &AppState, user_id: i64, identity: &Identity) -> ApiResult<()> {
+    let (name_column, avatar_column) = identity.profile_columns();
+    sqlx::query(&format!("UPDATE users SET {name_column} = ?, {avatar_column} = ? WHERE id = ?"))
+        .bind(identity.display_name())
+        .bind(identity.avatar_url())
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
+/// Apaga do disco a foto enviada antes (fotos do Discord/Spotify são links, não arquivos nossos).
+async fn delete_uploaded_avatar(state: &AppState, avatar_url: Option<&str>) {
+    let Some(old) = avatar_url else { return };
+    if let Some(old_file) = old.strip_prefix(&format!("{}/avatars/", state.config.public_url)) {
+        if !old_file.contains('/') && !old_file.contains("..") {
+            let _ = tokio::fs::remove_file(state.config.avatar_dir.join(old_file)).await;
+        }
+    }
 }
 
 /// O próprio perfil (vê quais logins estão vinculados).
@@ -65,6 +103,8 @@ pub struct Me {
     pub avatar_url: Option<String>,
     pub discord_linked: bool,
     pub spotify_linked: bool,
+    /// Nome e foto de cada login vinculado, para escolher qual usar no perfil.
+    pub linked_profiles: Vec<LinkedProfile>,
 }
 
 /// O que os outros veem.
@@ -76,22 +116,74 @@ pub struct PublicUser {
     pub avatar_url: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct MeRow {
+    id: i64,
+    username: String,
+    display_name: String,
+    avatar_url: Option<String>,
+    discord_id: Option<String>,
+    spotify_id: Option<String>,
+    discord_name: Option<String>,
+    discord_avatar: Option<String>,
+    spotify_name: Option<String>,
+    spotify_avatar: Option<String>,
+}
+
 pub async fn me(state: &AppState, user_id: i64) -> ApiResult<Me> {
-    let row: (i64, String, String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT id, username, display_name, avatar_url, discord_id, spotify_id FROM users WHERE id = ?",
+    let row: MeRow = sqlx::query_as(
+        "SELECT id, username, display_name, avatar_url, discord_id, spotify_id,
+                discord_name, discord_avatar, spotify_name, spotify_avatar
+         FROM users WHERE id = ?",
     )
     .bind(user_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::Unauthorized)?;
+    let mut linked_profiles = Vec::new();
+    if let (Some(_), Some(name)) = (&row.discord_id, row.discord_name) {
+        linked_profiles.push(LinkedProfile { provider: "discord", name, avatar_url: row.discord_avatar });
+    }
+    if let (Some(_), Some(name)) = (&row.spotify_id, row.spotify_name) {
+        linked_profiles.push(LinkedProfile { provider: "spotify", name, avatar_url: row.spotify_avatar });
+    }
     Ok(Me {
-        id: row.0,
-        username: row.1,
-        display_name: row.2,
-        avatar_url: row.3,
-        discord_linked: row.4.is_some(),
-        spotify_linked: row.5.is_some(),
+        id: row.id,
+        username: row.username,
+        display_name: row.display_name,
+        avatar_url: row.avatar_url,
+        discord_linked: row.discord_id.is_some(),
+        spotify_linked: row.spotify_id.is_some(),
+        linked_profiles,
     })
+}
+
+#[derive(Deserialize)]
+pub struct ProfileSource {
+    provider: String,
+}
+
+/// "Usar o perfil do Discord/Spotify": copia o nome e a foto daquele login para o perfil.
+pub async fn use_linked_profile(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(source): Json<ProfileSource>,
+) -> ApiResult<Json<Me>> {
+    let current = me(&state, user_id).await?;
+    let profile = current
+        .linked_profiles
+        .iter()
+        .find(|p| p.provider == source.provider)
+        .ok_or_else(|| ApiError::BadRequest("esse login não está vinculado a esta conta".into()))?;
+    let name: String = profile.name.chars().take(DISPLAY_NAME_MAX).collect();
+    sqlx::query("UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?")
+        .bind(&name)
+        .bind(&profile.avatar_url)
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
+    delete_uploaded_avatar(&state, current.avatar_url.as_deref()).await;
+    Ok(Json(me(&state, user_id).await?))
 }
 
 /// Acha a conta ligada a esta identidade ou cria uma nova.
@@ -101,6 +193,7 @@ pub async fn find_or_create(state: &AppState, identity: &Identity) -> ApiResult<
         .fetch_optional(&state.db)
         .await?;
     if let Some((id,)) = existing {
+        remember_profile(state, id, identity).await?;
         return Ok(id);
     }
     let username = free_username(state, &slugify(identity.display_name())).await?;
@@ -117,7 +210,9 @@ pub async fn find_or_create(state: &AppState, identity: &Identity) -> ApiResult<
     .execute(&state.db)
     .await?;
     tracing::info!("nova conta @{username} via {}", identity.label());
-    Ok(result.last_insert_rowid())
+    let id = result.last_insert_rowid();
+    remember_profile(state, id, identity).await?;
+    Ok(id)
 }
 
 /// Vincula outro login à conta (ex.: entrou pelo Spotify e liga o Discord).
@@ -127,7 +222,7 @@ pub async fn link(state: &AppState, user_id: i64, identity: &Identity) -> ApiRes
         .fetch_optional(&state.db)
         .await?;
     match owner {
-        Some((id,)) if id == user_id => Ok(()),
+        Some((id,)) if id == user_id => remember_profile(state, user_id, identity).await,
         Some(_) => Err(ApiError::Conflict(format!("esta conta do {} já está ligada a outro perfil", identity.label()))),
         None => {
             sqlx::query(&format!("UPDATE users SET {} = ? WHERE id = ?", identity.column()))
@@ -135,7 +230,7 @@ pub async fn link(state: &AppState, user_id: i64, identity: &Identity) -> ApiRes
                 .bind(user_id)
                 .execute(&state.db)
                 .await?;
-            Ok(())
+            remember_profile(state, user_id, identity).await
         }
     }
 }
@@ -255,12 +350,8 @@ pub async fn upload_avatar(State(state): State<AppState>, AuthUser(user_id): Aut
     sqlx::query("UPDATE users SET avatar_url = ? WHERE id = ?").bind(&url).bind(user_id).execute(&state.db).await?;
 
     // Apaga a foto anterior enviada (fotos do Discord/Spotify são externas e ficam lá).
-    if let Some((Some(old),)) = previous {
-        if let Some(old_file) = old.strip_prefix(&format!("{}/avatars/", state.config.public_url)) {
-            if !old_file.contains('/') && !old_file.contains("..") {
-                let _ = tokio::fs::remove_file(state.config.avatar_dir.join(old_file)).await;
-            }
-        }
+    if let Some((old,)) = previous {
+        delete_uploaded_avatar(&state, old.as_deref()).await;
     }
     Ok(Json(me(&state, user_id).await?))
 }

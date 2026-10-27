@@ -116,6 +116,13 @@ export interface Alternatives {
   options: Track[];
 }
 
+/** Ids da lista de curtidas de cada serviço (ver os `LIKED_ID`/`LIKES_ID` dos providers no Rust). */
+const LIKED_IDS: Record<Source, string> = { spotify: "liked", youtube_music: "LM", soundcloud: "likes" };
+
+/** É a lista de curtidas do serviço (ganha capa própria)? */
+export const isLikedCollection = (p: { source: Source | null; id: string }) =>
+  p.source !== null && LIKED_IDS[p.source] === p.id;
+
 /** Uma faixa que ainda vai tocar: na sua fila ou no resto do contexto (`player/queue.rs`). */
 export type QueueSlot = { list: "queued"; index: number } | { list: "context"; index: number };
 
@@ -131,6 +138,14 @@ export interface Me {
   avatarUrl: string | null;
   discordLinked: boolean;
   spotifyLinked: boolean;
+  /** Nome e foto de cada login vinculado, para escolher qual usar no perfil. */
+  linkedProfiles: LinkedProfile[];
+}
+
+export interface LinkedProfile {
+  provider: LoginProvider;
+  name: string;
+  avatarUrl: string | null;
 }
 
 /** O que os outros veem de alguém. */

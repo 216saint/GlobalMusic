@@ -39,7 +39,7 @@ const TRACKS: Track[] = [
 
 const PLAYLISTS: Playlist[] = [
   {
-    id: "p1",
+    id: "liked",
     source: "spotify",
     name: "Músicas Curtidas",
     owner: "você",
@@ -71,9 +71,9 @@ const PLAYLISTS: Playlist[] = [
     artwork: null,
   },
   {
-    id: "p5",
+    id: "LM",
     source: "youtube_music",
-    name: "Curtidas",
+    name: "Músicas que gostei",
     owner: "você",
     trackCount: 201,
     artwork: null,
@@ -166,6 +166,13 @@ const commands: Record<string, (args: any) => unknown> = {
         : { ...r, items: [], error: `${r.source} não está conectado` },
     ),
   playlist_tracks: ({ source }) => TRACKS.filter((t) => t.source === source),
+  imported_playlists: () => imported,
+  import_playlist: ({ link }) => {
+    const source: Source = link.includes("spotify") ? "spotify" : link.includes("soundcloud") ? "soundcloud" : "youtube_music";
+    imported = [{ id: `imp${imported.length}`, source, name: "Playlist importada", owner: null, trackCount: null, artwork: null }, ...imported];
+    return imported;
+  },
+  remove_imported_playlist: ({ source, id }) => (imported = imported.filter((p) => !(p.source === source && p.id === id))),
   accounts: () => accounts,
   connect_account: ({ source }) => {
     const account = accounts.find((a) => a.source === source)!;
@@ -274,6 +281,7 @@ const commands: Record<string, (args: any) => unknown> = {
 };
 
 let favorites: Track[] = [];
+let imported: Playlist[] = [];
 
 // Conta GlobalMusic de mentira: começa deslogada; `?logado` na URL já entra.
 let me: Me | null = location.search.includes("logado")
@@ -283,7 +291,11 @@ let me: Me | null = location.search.includes("logado")
       displayName: "Você",
       avatarUrl: null,
       discordLinked: true,
-      spotifyLinked: false,
+      spotifyLinked: true,
+      linkedProfiles: [
+        { provider: "discord", name: "você no Discord", avatarUrl: null },
+        { provider: "spotify", name: "Você (Spotify)", avatarUrl: null },
+      ],
     }
   : null;
 const PEOPLE: PublicUser[] = [
@@ -316,7 +328,12 @@ Object.assign(commands, {
       avatarUrl: null,
       discordLinked: provider === "discord",
       spotifyLinked: provider === "spotify",
+      linkedProfiles: [],
     }),
+  social_use_profile: ({ provider }: { provider: string }) => {
+    const profile = me!.linkedProfiles.find((p) => p.provider === provider)!;
+    return (me = { ...me!, displayName: profile.name, avatarUrl: profile.avatarUrl });
+  },
   social_link: ({ provider }: { provider: string }) => (me = { ...me!, [`${provider}Linked`]: true }),
   social_logout: () => void (me = null),
   social_update_profile: (changes: Partial<Me>) => (me = { ...me!, ...changes }),

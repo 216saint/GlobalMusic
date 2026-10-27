@@ -50,6 +50,17 @@ pub struct Me {
     pub avatar_url: Option<String>,
     pub discord_linked: bool,
     pub spotify_linked: bool,
+    /// Nome e foto de cada login vinculado (para escolher qual usar no perfil).
+    #[serde(default)]
+    pub linked_profiles: Vec<LinkedProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedProfile {
+    pub provider: String,
+    pub name: String,
+    pub avatar_url: Option<String>,
 }
 
 /// O que os outros veem de alguém.
@@ -213,6 +224,16 @@ impl Social {
         Ok(self.send(self.authed(Method::PATCH, &["me"])?.json(&body)).await?.json().await?)
     }
 
+    /// Usa o nome e a foto que a pessoa tem no Discord ou no Spotify.
+    pub async fn use_linked_profile(&self, provider: LoginProvider) -> Result<Me> {
+        let provider = match provider {
+            LoginProvider::Discord => "discord",
+            LoginProvider::Spotify => "spotify",
+        };
+        let body = serde_json::json!({ "provider": provider });
+        Ok(self.send(self.authed(Method::POST, &["me", "profile-from"])?.json(&body)).await?.json().await?)
+    }
+
     pub async fn upload_avatar(&self, image: Vec<u8>) -> Result<Me> {
         let request = self.authed(Method::PUT, &["me", "avatar"])?.header("content-type", "application/octet-stream").body(image);
         Ok(self.send(request).await?.json().await?)
@@ -300,6 +321,11 @@ pub async fn social_update_profile(
     username: Option<String>,
 ) -> Result<Me> {
     state.social.update_profile(display_name, username).await
+}
+
+#[tauri::command]
+pub async fn social_use_profile(state: State<'_, AppState>, provider: LoginProvider) -> Result<Me> {
+    state.social.use_linked_profile(provider).await
 }
 
 /// A foto chega crua (bytes, não JSON): o frontend já reduziu e converteu para JPEG.

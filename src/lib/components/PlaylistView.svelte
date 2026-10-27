@@ -4,8 +4,9 @@
   import Heart from "@lucide/svelte/icons/heart";
   import Play from "@lucide/svelte/icons/play";
   import { app, type OpenedPlaylist } from "$lib/app.svelte";
-  import { SOURCE_LABEL } from "$lib/types";
+  import { SOURCE_LABEL, isLikedCollection } from "$lib/types";
   import Artwork from "./Artwork.svelte";
+  import LikedCover from "./LikedCover.svelte";
   import Bars from "./Bars.svelte";
   import SourceIcon from "./SourceIcon.svelte";
   import TrackRow from "./TrackRow.svelte";
@@ -19,6 +20,8 @@
   <header>
     {#if opened.kind === "favorites"}
       <span class="fav-art"><Heart size={30} fill="currentColor" strokeWidth={0} /></span>
+    {:else if opened.source && isLikedCollection(opened)}
+      <LikedCover source={opened.source} size="72px" />
     {:else}
       <Artwork url={opened.artworkUrl} seed={opened.id} size="72px" radius="14px" />
     {/if}

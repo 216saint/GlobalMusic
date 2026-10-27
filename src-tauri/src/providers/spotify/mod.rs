@@ -97,26 +97,82 @@ impl SpotifyProvider {
     /// GET autenticado na Web API (caminho relativo ou URL completa de paginação).
     async fn get_json<T: DeserializeOwned>(&self, path_or_url: &str) -> Result<T> {
         let token = self.access_token().await?;
+        self.get_json_with(&token, path_or_url).await
+    }
+
+    async fn get_json_with<T: DeserializeOwned>(&self, token: &str, path_or_url: &str) -> Result<T> {
         let url = if path_or_url.starts_with("http") {
             path_or_url.to_owned()
         } else {
             format!("{}{path_or_url}", spotify::API_URL)
         };
-        let response = http::send(|| self.http.get(&url).bearer_auth(&token)).await?;
+        let response = http::send(|| self.http.get(&url).bearer_auth(token)).await?;
         Ok(response.error_for_status()?.json().await?)
     }
 
     /// Segue o campo `next` até `max_pages` páginas.
     async fn all_pages<T: DeserializeOwned>(&self, first: &str, max_pages: usize) -> Result<Vec<T>> {
+        let token = self.access_token().await?;
+        self.all_pages_with(&token, first, max_pages).await
+    }
+
+    async fn all_pages_with<T: DeserializeOwned>(&self, token: &str, first: &str, max_pages: usize) -> Result<Vec<T>> {
         let mut items = Vec::new();
         let mut next = Some(first.to_owned());
         for _ in 0..max_pages {
             let Some(url) = next.take() else { break };
-            let page: Page<T> = self.get_json(&url).await?;
+            let page: Page<T> = self.get_json_with(token, &url).await?;
             items.extend(page.items);
             next = page.next;
         }
         Ok(items)
+    }
+
+    /// Faixas de uma playlist de **outra pessoa** (importada por link).
+    ///
+    /// Um client ID próprio fica em Development Mode, e lá o Spotify só entrega as faixas de
+    /// playlists que a pessoa criou ou colabora: as dos outros vêm vazias. O token de reprodução
+    /// (client oficial) não tem essa restrição, então é ele que lê. Sem client ID próprio, o token
+    /// de sempre já é do client oficial.
+    pub async fn shared_playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        if self.client_id.custom().is_none() {
+            return self.playlist_tracks(playlist_id).await;
+        }
+        match self.valid_token(PLAYBACK_KEY, self.client_id.official()).await {
+            Ok((token, _)) => self.playlist_items(&token, playlist_id).await,
+            // Sem o token de reprodução: o da pessoa ainda serve se a playlist for dela.
+            Err(Error::NotConnected(_)) => match self.playlist_tracks(playlist_id).await {
+                Ok(tracks) if !tracks.is_empty() => Ok(tracks),
+                _ => Err(Error::Other(
+                    "reconecte o Spotify no Perfil para abrir playlists de outras pessoas".into(),
+                )),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Faixas de uma playlist (não as curtidas), lidas com `token`.
+    async fn playlist_items(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
+        // Em 2026 o Spotify trocou `/tracks` por `/items` (o antigo responde 403).
+        // Tentamos o novo e, se ele não existir para este cliente, o antigo.
+        let items_url = format!("/playlists/{playlist_id}/items?limit=100");
+        let items: Vec<Item> = match self.all_pages_with(token, &items_url, MAX_TRACK_PAGES).await {
+            Ok(items) => items,
+            Err(e) if matches!(http_status(&e), Some(403 | 404)) => {
+                log::info!("Spotify: /items recusado ({e}); tentando /tracks");
+                let tracks_url = format!("/playlists/{playlist_id}/tracks?limit=100");
+                self.all_pages_with(token, &tracks_url, MAX_TRACK_PAGES).await.map_err(|e| match http_status(&e) {
+                    Some(403) => Error::Other(
+                        "o Spotify não libera as faixas desta playlist para apps de terceiros \
+                         (playlists geradas pelo Spotify, como Daily Mix e Descobertas da Semana, são restritas)"
+                            .into(),
+                    ),
+                    _ => e,
+                })?
+            }
+            Err(e) => return Err(e),
+        };
+        Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
     }
 
     /// Access token da Web API, renovando com o refresh token se precisar.
@@ -372,29 +428,11 @@ impl MusicProvider for SpotifyProvider {
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
-        let items: Vec<Item> = if playlist_id == LIKED_ID {
-            self.all_pages("/me/tracks?limit=50", MAX_TRACK_PAGES).await?
-        } else {
-            // Em 2026 o Spotify trocou `/tracks` por `/items` (o antigo responde 403).
-            // Tentamos o novo e, se ele não existir para este cliente, o antigo.
-            let items_url = format!("/playlists/{playlist_id}/items?limit=100");
-            match self.all_pages(&items_url, MAX_TRACK_PAGES).await {
-                Ok(items) => items,
-                Err(e) if matches!(http_status(&e), Some(403 | 404)) => {
-                    log::info!("Spotify: /items recusado ({e}); tentando /tracks");
-                    let tracks_url = format!("/playlists/{playlist_id}/tracks?limit=100");
-                    self.all_pages(&tracks_url, MAX_TRACK_PAGES).await.map_err(|e| match http_status(&e) {
-                        Some(403) => Error::Other(
-                            "o Spotify não libera as faixas desta playlist para apps de terceiros \
-                             (playlists geradas pelo Spotify, como Daily Mix e Descobertas da Semana, são restritas)"
-                                .into(),
-                        ),
-                        _ => e,
-                    })?
-                }
-                Err(e) => return Err(e),
-            }
-        };
+        let token = self.access_token().await?;
+        if playlist_id != LIKED_ID {
+            return self.playlist_items(&token, playlist_id).await;
+        }
+        let items: Vec<Item> = self.all_pages_with(&token, "/me/tracks?limit=50", MAX_TRACK_PAGES).await?;
         Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
     }
 

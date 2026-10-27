@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/me/avatar", put(users::upload_avatar).layer(DefaultBodyLimit::max(users::AVATAR_MAX_BYTES)))
         .route("/me/link/spotify", post(auth::link_spotify))
         .route("/me/link/discord", post(auth::link_discord_ticket))
+        .route("/me/profile-from", post(users::use_linked_profile))
         .route("/users/search", get(users::search))
         .route("/friends", get(friends::list))
         .route("/friends/{username}", post(friends::add).merge(delete(friends::remove)))

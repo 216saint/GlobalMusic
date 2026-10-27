@@ -188,6 +188,12 @@ impl Player {
         self.volume = volume.clamp(0.0, 1.0);
     }
 
+    /// A faixa atual vai carregar de novo, do começo (ex.: o Spotify recusou e ela vai pelo YouTube):
+    /// relógio zerado e parado até o som começar.
+    pub fn reload(&mut self) {
+        self.restart_track(true);
+    }
+
     /// O som começou de verdade: o relógio passa a andar a partir de `position_ms`.
     pub fn started(&mut self, position_ms: u64) {
         let now = Instant::now();

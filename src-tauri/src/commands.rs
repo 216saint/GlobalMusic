@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::aggregate;
 use crate::audio::{AudioEvent, PrepareReason};
+use crate::imports::{self, Link};
 use crate::lyrics::Lyrics;
 use crate::error::Result;
 use crate::models::{AccountStatus, Playlist, Source, SourceResults, Track};
@@ -42,6 +43,10 @@ pub async fn library_playlists(state: State<'_, AppState>) -> Result<Vec<SourceR
 
 #[tauri::command]
 pub async fn playlist_tracks(state: State<'_, AppState>, source: Source, playlist_id: String) -> Result<Vec<Track>> {
+    // Playlist de outra pessoa, importada por link: no Spotify ela tem um caminho próprio.
+    if source == Source::Spotify && state.imports.contains(source, &playlist_id).await {
+        return state.providers.spotify.shared_playlist_tracks(&playlist_id).await;
+    }
     state.providers.get(source).playlist_tracks(&playlist_id).await
 }
 
@@ -239,6 +244,29 @@ pub async fn player_prepare(app: AppHandle, state: State<'_, AppState>, tracks: 
     Ok(())
 }
 
+/// Playlists importadas por link (a UI junta com as da biblioteca).
+#[tauri::command]
+pub async fn imported_playlists(state: State<'_, AppState>) -> Result<Vec<Playlist>> {
+    Ok(state.imports.list().await)
+}
+
+/// Importa a playlist de um link do Spotify, do YouTube Music ou do SoundCloud.
+#[tauri::command]
+pub async fn import_playlist(state: State<'_, AppState>, link: String) -> Result<Vec<Playlist>> {
+    let playlist = match imports::parse_link(&link)? {
+        Link::Spotify(id) => imports::describe(&state.http, Source::Spotify, &id).await?,
+        Link::YoutubeMusic(id) => imports::describe(&state.http, Source::YoutubeMusic, &id).await?,
+        Link::Soundcloud(url) => state.providers.soundcloud.resolve_playlist(&url).await?,
+    };
+    log::info!("playlist importada: \"{}\" ({})", playlist.name, playlist.source.label());
+    Ok(state.imports.add(playlist).await)
+}
+
+#[tauri::command]
+pub async fn remove_imported_playlist(state: State<'_, AppState>, source: Source, id: String) -> Result<Vec<Playlist>> {
+    Ok(state.imports.remove(source, &id).await)
+}
+
 /// Letra da faixa (LRCLIB): sincronizada quando existir, senão corrida.
 #[tauri::command]
 pub async fn lyrics(state: State<'_, AppState>, track: Track) -> Result<Option<Lyrics>> {
@@ -312,12 +340,20 @@ pub async fn on_audio_event(app: &AppHandle, event: AudioEvent) {
             }
             if let Some(track) = snapshot.current {
                 log::info!("[{generation}] Spotify recusou \"{}\"; tentando pelo YouTube", track.title);
+                // O relógio já andava (o librespot tinha aceitado a faixa): volta para "carregando", do zero.
+                // Antes, a música começava em 2–3 s e esperava o download inteiro (começar do meio exige seek).
+                update_player(app, &state, Player::reload).await;
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app.state::<AppState>();
-                    let (start, volume) = (snapshot.position_ms, snapshot.volume);
-                    if let Err(e) = state.audio.load_fallback(generation, &track, start, volume).await {
-                        state.audio.report(AudioEvent::Failed(generation, e.to_string()));
+                    match state.audio.load_fallback(generation, &track, 0, snapshot.volume).await {
+                        Ok(()) if state.audio.is_current(generation) => {
+                            update_player(&app, &state, |p| p.started(0)).await;
+                            preload_upcoming(&app).await;
+                            skip_offtopic(&app, generation, track, PlaybackRoute::YoutubeFallback);
+                        }
+                        Ok(()) => {}
+                        Err(e) => state.audio.report(AudioEvent::Failed(generation, e.to_string())),
                     }
                 });
             }

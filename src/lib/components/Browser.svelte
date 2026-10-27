@@ -3,6 +3,7 @@
   import Search from "@lucide/svelte/icons/search";
   import Heart from "@lucide/svelte/icons/heart";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import Link2 from "@lucide/svelte/icons/link-2";
   import { app } from "$lib/app.svelte";
   import type { SourceResults } from "$lib/types";
   import { SOURCE_LABEL } from "$lib/types";
@@ -25,14 +26,12 @@
 
   const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-  const routeLabel = $derived.by(() => {
-    const route = app.player.route?.kind;
-    if (!route) return "Nada tocando";
-    if (app.player.loading) return "Carregando o áudio…";
-    if (route === "spotify_native") return "Tocando pelo Spotify Premium";
-    if (route === "youtube_fallback") return "Spotify Free: áudio vindo do YouTube";
-    return `Tocando pelo ${SOURCE_LABEL[app.player.current!.source]}`;
-  });
+  let importLink = $state("");
+  async function importFromLink(event: SubmitEvent) {
+    event.preventDefault();
+    if (await app.importPlaylist(importLink)) importLink = "";
+  }
+
 </script>
 
 <!-- Abas (Buscar/Biblioteca) e filtros de fonte ficam na barra de título (TitleBar.svelte). -->
@@ -70,6 +69,23 @@
       </p>
     {/each}
 
+    {#if app.tab === "library" && !app.opened}
+      <!-- Importar uma playlist de qualquer serviço pelo link (sem precisar ser sua). -->
+      <form class="import" onsubmit={importFromLink}>
+        <Link2 size={15} />
+        <label class="sr-only" for="import-link">Link de uma playlist</label>
+        <input
+          id="import-link"
+          placeholder="Colar link de playlist (Spotify, YouTube Music, SoundCloud)"
+          bind:value={importLink}
+          spellcheck="false"
+        />
+        <button type="submit" disabled={!importLink.trim() || app.importing}>
+          {app.importing ? "Importando…" : "Importar"}
+        </button>
+      </form>
+    {/if}
+
     {#if app.tab === "search"}
       {#if app.tracks.length}
         <ul class="tracks">
@@ -103,7 +119,11 @@
       {/if}
       <div class="grid">
         {#each app.playlistItems as playlist (playlist.source + playlist.id)}
-          <PlaylistTile {playlist} onopen={() => app.openPlaylist(playlist)} />
+          <PlaylistTile
+            {playlist}
+            onopen={() => app.openPlaylist(playlist)}
+            onremove={app.isImported(playlist) ? () => app.removeImported(playlist) : undefined}
+          />
         {/each}
       </div>
     {:else}
@@ -115,15 +135,17 @@
     {/if}
   </div>
 
-  <footer class="status">
-    {#if app.playbackError}
-      <!-- A mensagem inteira fica no title: passe o mouse para ler o que o rodapé cortou. -->
-      <span class="error" role="status" title={app.playbackError}>{capitalize(app.playbackError)}</span>
-    {:else}
-      <span>{routeLabel}</span>
-    {/if}
-    {#if app.searching}<span class="searching">Buscando…</span>{/if}
-  </footer>
+  <!-- Rodapé só quando há algo a dizer: um erro ou uma busca em andamento. De onde vem o áudio
+       é detalhe interno e não aparece. -->
+  {#if app.playbackError || app.searching}
+    <footer class="status">
+      {#if app.playbackError}
+        <!-- A mensagem inteira fica no title: passe o mouse para ler o que o rodapé cortou. -->
+        <span class="error" role="status" title={app.playbackError}>{capitalize(app.playbackError)}</span>
+      {/if}
+      {#if app.searching}<span class="searching">Buscando…</span>{/if}
+    </footer>
+  {/if}
 </section>
 
 <style>
@@ -142,6 +164,47 @@
     font-family: var(--font-display);
     font-size: 17px;
     font-weight: 650;
+  }
+
+  .import {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 6px 12px;
+    padding: 0 6px 0 12px;
+    border-radius: 12px;
+    border: 1px solid var(--edge);
+    background: var(--tint-1);
+    color: var(--ink-3);
+  }
+
+  .import:focus-within {
+    border-color: var(--violet);
+  }
+
+  .import input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 0;
+    border: none;
+    background: none;
+    outline: none;
+    color: var(--ink);
+    font-size: 13px;
+  }
+
+  .import button {
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    background: var(--violet);
+    color: #fff;
+  }
+
+  .import button:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 
   .back {

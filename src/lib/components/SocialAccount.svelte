@@ -91,6 +91,26 @@
       {/if}
     </div>
 
+    {#if me.linkedProfiles.length}
+      <!-- Sincronizar o perfil: nome e foto vindos do Discord ou do Spotify. -->
+      <div class="sync">
+        <span class="muted">Usar o perfil do:</span>
+        {#each me.linkedProfiles as profile (profile.provider)}
+          {@const inUse = me.displayName === profile.name && me.avatarUrl === profile.avatarUrl}
+          <button
+            class="chip profile"
+            class:in-use={inUse}
+            disabled={inUse || social.busy !== null}
+            title={inUse ? "Em uso" : `Usar "${profile.name}" e a foto do ${profile.provider === "discord" ? "Discord" : "Spotify"}`}
+            onclick={() => social.useLinkedProfile(profile.provider)}
+          >
+            <Avatar name={profile.name} url={profile.avatarUrl} size={18} />
+            {profile.provider === "discord" ? "Discord" : "Spotify"}
+          </button>
+        {/each}
+      </div>
+    {/if}
+
     <div class="logins">
       <span class="muted">Entrar com:</span>
       {#if me.discordLinked}
@@ -267,6 +287,35 @@
 
   .logout {
     margin-left: auto;
+  }
+
+  .sync {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 12.5px;
+  }
+
+  .chip.profile {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px 3px 4px;
+    background: none;
+    color: var(--ink-2);
+  }
+
+  .chip.profile:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: var(--violet);
+  }
+
+  .chip.profile.in-use {
+    background: var(--violet-dim);
+    color: var(--ink);
+    cursor: default;
   }
 
   .lead {

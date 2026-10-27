@@ -108,6 +108,11 @@ class SocialStore {
     return me !== undefined;
   }
 
+  async useLinkedProfile(provider: LoginProvider) {
+    const me = await this.#run("profile", () => api.useLinkedProfile(provider));
+    if (me) this.me = me;
+  }
+
   async uploadAvatar(file: File) {
     const me = await this.#run("avatar", async () => api.uploadAvatar(await toAvatarJpeg(file)));
     if (me) this.me = me;

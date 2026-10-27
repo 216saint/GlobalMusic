@@ -467,6 +467,42 @@ servidor não sabe o que a pessoa ouve.
 LRCLIB, SponsorBlock, escolher versão), todas escritas do zero. Copiar código obrigaria o GlobalMusic
 inteiro a virar AGPL.
 
+#### 27. "Começou em 2–3 s", fila lateral, importar por link e sincronizar o perfil
+**Começava em 2–3 s e demorava:** quando o Spotify recusava a chave de áudio, o relógio do player já
+andava (o librespot tinha "aceitado" a faixa). A recuperação pelo YouTube usava essa posição como ponto
+de partida. Isso tinha dois efeitos: a música começava no meio, e começar do meio exige seek, então
+o app esperava o download inteiro em vez de tocar com o primeiro pedaço. Agora o player volta para
+"carregando" no zero (`Player::reload`). A desistência do librespot fica salva por 24 h num arquivo,
+e abrir o app de novo não gasta mais duas tentativas de ~3 s.
+
+**Client ID próprio do Spotify não serve para conta Free:** desde fevereiro de 2026, o Spotify só deixa
+conta **Premium** criar Client ID (modo de desenvolvimento, até 5 usuários). Torná-lo obrigatório
+deixaria quem é Free sem Spotify. Por isso ele continua opcional, com um passo a passo mais claro: aviso
+de Premium, botão que abre o painel, botão de copiar o endereço de retorno e conferência do formato.
+
+**Importar playlist por link** (`imports.rs`): o nome e a capa vêm do **oEmbed** (o endereço público que
+os sites usam para prévias de link), sem login e sem gastar cota. No SoundCloud, o link não tem o id, e
+o `/resolve` da API faz a conversão. As faixas só são buscadas ao abrir.
+
+**Playlist de outra pessoa com Client ID próprio:** um Client ID criado no dashboard fica em Development
+Mode, e desde fevereiro de 2026 o Spotify só entrega as faixas de playlists que a pessoa criou ou colabora.
+As dos outros chegam sem `items`, então a playlist importada abriria vazia. Por isso as importadas são lidas
+com o token de reprodução, que é do client oficial e não tem essa restrição
+(`SpotifyProvider::shared_playlist_tracks`). Sem Client ID próprio nada muda, porque o token de sempre já é
+o do client oficial. Não custa requisição extra: o app sabe de antemão que a playlist é importada.
+
+**Sincronizar o perfil:** o servidor guarda nome e foto de cada login vinculado (migração `0002`, com backup
+do banco antes) e oferece `POST /me/profile-from`. A pessoa escolhe "usar o perfil do Discord/Spotify".
+
+**Interface:**
+- A fila virou menu lateral (o player continua visível e se recentraliza).
+- Capas próprias para as "Curtidas" de cada serviço.
+- Cards de tamanho fixo: o `aspect-ratio` sozinho não segura uma foto alta num item flex, por causa do
+  mínimo automático; foi preciso `min-height: 0` e a imagem absoluta.
+- Logo só com as barras (SVG, sem o fundo do PNG).
+- Barras de rolagem do tema.
+- Sem os textos "Spotify Free: áudio vindo do YouTube".
+
 ### Estado ao fim da sessão
 
 - ✅ 65 testes passando (+1 manual), zero avisos, sem `allow(dead_code)`.

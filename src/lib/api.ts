@@ -53,6 +53,10 @@ const call = async <T>(cmd: string, args?: InvokeArgs) => (await getBackend()).c
 export const api = {
   search: (query: string, limit = 10) => call<SourceResults<Track>[]>("search", { query, limit }),
   libraryPlaylists: () => call<SourceResults<Playlist>[]>("library_playlists"),
+  importedPlaylists: () => call<Playlist[]>("imported_playlists"),
+  /** Importa por link (Spotify, YouTube Music ou SoundCloud); devolve as importadas. */
+  importPlaylist: (link: string) => call<Playlist[]>("import_playlist", { link }),
+  removeImportedPlaylist: (source: Source, id: string) => call<Playlist[]>("remove_imported_playlist", { source, id }),
   playlistTracks: (source: Source, playlistId: string) => call<Track[]>("playlist_tracks", { source, playlistId }),
 
   accounts: () => call<AccountStatus[]>("accounts"),
@@ -102,6 +106,8 @@ export const api = {
   socialLink: (provider: LoginProvider) => call<Me>("social_link", { provider }),
   socialLogout: () => call<void>("social_logout"),
   updateProfile: (changes: { displayName?: string; username?: string }) => call<Me>("social_update_profile", changes),
+  /** Usa o nome e a foto do Discord ou do Spotify no perfil. */
+  useLinkedProfile: (provider: LoginProvider) => call<Me>("social_use_profile", { provider }),
   /** JPEG já reduzido; vai como bytes crus pelo IPC. */
   uploadAvatar: (jpeg: Uint8Array) => call<Me>("social_upload_avatar", jpeg),
   searchUsers: (query: string) => call<PublicUser[]>("social_search", { query }),

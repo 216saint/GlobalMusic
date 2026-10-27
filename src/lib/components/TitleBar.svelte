@@ -15,9 +15,9 @@
   import Users from "@lucide/svelte/icons/users";
   import { app, type Filter, type Panel, type Tab } from "$lib/app.svelte";
   import { SOURCES, SOURCE_LABEL } from "$lib/types";
-  import logo from "$lib/assets/logo.png";
   import { social } from "$lib/social.svelte";
   import Avatar from "./Avatar.svelte";
+  import Bars from "./Bars.svelte";
   import SourceIcon from "./SourceIcon.svelte";
 
   const os = document.documentElement.dataset.os;
@@ -36,7 +36,8 @@
 
 <header class="titlebar" class:mac={os === "macos"} data-tauri-drag-region>
   <div class="brand" data-tauri-drag-region>
-    <img src={logo} alt="" width="20" height="20" data-tauri-drag-region />
+    <!-- Só as barras do ícone, sem o fundo escuro do PNG. -->
+    <span class="logo" data-tauri-drag-region><Bars size={20} /></span>
     <span class="name" data-tauri-drag-region>GlobalMusic</span>
   </div>
 
@@ -152,8 +153,11 @@
     min-width: 0;
   }
 
-  .brand img {
-    border-radius: 5px;
+  .logo {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    pointer-events: none; /* o arrasto da janela passa para a barra */
   }
 
   .name {

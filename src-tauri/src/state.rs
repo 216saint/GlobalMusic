@@ -11,6 +11,7 @@ use crate::config::DISCORD_APP_ID;
 use crate::player::Player;
 use crate::presence::Presence;
 use crate::providers::Providers;
+use crate::imports::Imports;
 use crate::lyrics::LyricsClient;
 use crate::social::Social;
 use crate::sponsorblock::SponsorBlock;
@@ -24,6 +25,10 @@ pub struct AppState {
     pub social: Social,
     pub lyrics: LyricsClient,
     pub sponsor: SponsorBlock,
+    /// Playlists importadas por link.
+    pub imports: Imports,
+    /// HTTP genérico (oEmbed das playlists importadas).
+    pub http: reqwest::Client,
 }
 
 impl AppState {
@@ -51,6 +56,8 @@ impl AppState {
             social: Social::new(http.clone()),
             lyrics: LyricsClient::new(http.clone()),
             sponsor: SponsorBlock::new(http.clone()),
+            imports: Imports::load(app.path().app_data_dir().ok().map(|d| d.join("imported-playlists.json"))),
+            http: http.clone(),
             providers,
             player: Mutex::new(Player::default()),
             presence: Presence::spawn(DISCORD_APP_ID.map(str::to_owned)),

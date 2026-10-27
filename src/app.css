@@ -114,3 +114,30 @@ input {
     transition: none !important;
   }
 }
+
+/* Barras de rolagem do próprio app: finas, arredondadas e na cor do tema, em vez da padrão do
+   sistema. `::-webkit-scrollbar` vale nas três WebViews (WebView2, WKWebView, WebKitGTK). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  /* A borda transparente afina a barra visível e deixa uma folga da beira do painel. */
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(245, 244, 255, 0.16) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(154, 143, 255, 0.55) padding-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}

@@ -84,6 +84,9 @@ class AppStore {
   searching = $state(false);
   results = $state<SourceResults<Track>[]>([]);
   playlists = $state<SourceResults<Playlist>[]>([]);
+  /** Playlists importadas por link (ficam na biblioteca junto com as da pessoa). */
+  imported = $state<Playlist[]>([]);
+  importing = $state(false);
   accounts = $state<AccountStatus[]>([]);
   busySource = $state<Source | null>(null);
   notice = $state<string | null>(null);
@@ -116,7 +119,36 @@ class AppStore {
 
   get playlistItems(): Playlist[] {
     const groups = this.playlists.filter((r) => this.filter === "all" || r.source === this.filter).map((r) => r.items);
-    return interleave(groups);
+    const own = interleave(groups);
+    // Importadas primeiro (a mais recente no topo); sem repetir uma que a pessoa já tem.
+    const extra = this.imported.filter(
+      (p) => (this.filter === "all" || p.source === this.filter) && !own.some((o) => o.source === p.source && o.id === p.id),
+    );
+    return [...extra, ...own];
+  }
+
+  isImported(playlist: Playlist) {
+    return this.imported.some((p) => p.source === playlist.source && p.id === playlist.id);
+  }
+
+  async importPlaylist(link: string) {
+    if (!link.trim() || this.importing) return false;
+    this.importing = true;
+    try {
+      this.imported = await api.importPlaylist(link.trim());
+      this.notify(`"${this.imported[0].name}" entrou na sua biblioteca`);
+      return true;
+    } catch (e) {
+      this.notify(errorMessage(e));
+      return false;
+    } finally {
+      this.importing = false;
+    }
+  }
+
+  async removeImported(playlist: Playlist) {
+    this.imported = await api.removeImportedPlaylist(playlist.source, playlist.id);
+    this.notify(`"${playlist.name}" saiu da biblioteca`);
   }
 
   /** A sua fila (o que foi posto à mão): toca antes do resto da lista. */
@@ -152,13 +184,15 @@ class AppStore {
       clearTimeout(this.#errorTimer);
       this.#errorTimer = setTimeout(() => (this.playbackError = null), 8000);
     });
-    const [player, favorites] = await Promise.all([
+    const [player, favorites, imported] = await Promise.all([
       api.playerState(),
       api.favorites(),
+      api.importedPlaylists(),
       this.loadAccounts(),
       this.loadLibrary(),
     ]);
     this.favorites = favorites;
+    this.imported = imported;
     this.#applyPlayer(player);
     setInterval(() => this.#tick(), TICK_MS);
   }

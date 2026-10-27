@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod error;
 mod favorites;
+mod imports;
 mod lyrics;
 mod models;
 mod player;
@@ -83,6 +84,9 @@ pub fn run() {
             commands::lyrics,
             commands::track_alternatives,
             commands::choose_track_version,
+            commands::imported_playlists,
+            commands::import_playlist,
+            commands::remove_imported_playlist,
             updates::update_check,
             updates::update_install,
             social::social_me,
@@ -90,6 +94,7 @@ pub fn run() {
             social::social_link,
             social::social_logout,
             social::social_update_profile,
+            social::social_use_profile,
             social::social_upload_avatar,
             social::social_search,
             social::social_friends,

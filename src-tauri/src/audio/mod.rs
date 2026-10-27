@@ -78,8 +78,10 @@ pub enum PrepareReason {
     Hover,
 }
 
-/// Recusas do librespot até desistir dele nesta sessão (ver `Audio::note_native_refused`).
+/// Recusas do librespot até desistir dele (ver `Audio::note_native_refused`).
 const NATIVE_REFUSALS_TO_GIVE_UP: u32 = 2;
+/// Depois de desistir, por quanto tempo nem tentamos (vale entre aberturas do app).
+const NATIVE_OFF_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// yt-dlp em segundo plano ao mesmo tempo, no máximo. Mais que isso pesa no computador
 /// (cada um usa ~1 núcleo por 1–2 s) e chama atenção do YouTube.
@@ -132,8 +134,10 @@ pub struct Audio {
     matches: Matches,
     /// A faixa atual está tocando de um download ainda em andamento (sem seek).
     streaming: Mutex<Option<(Arc<fetch::Incoming>, &'static str)>>,
-    /// Quantas vezes o Spotify recusou tocar pelo librespot nesta sessão.
+    /// Quantas vezes o Spotify recusou tocar pelo librespot.
     native_refusals: AtomicU32,
+    /// Marca em disco de "o Spotify está recusando o librespot" (a data do arquivo diz desde quando).
+    native_off_marker: Option<PathBuf>,
     /// Vagas para yt-dlp em segundo plano (preparar antes do clique, próximas da fila).
     background_slots: Semaphore,
     /// A "vez" de cada motivo de preparação (ver `PrepareReason`).
@@ -151,6 +155,7 @@ impl Audio {
         cache_dir: Option<PathBuf>,
         data_dir: Option<PathBuf>,
     ) -> Self {
+        let native_off_marker = cache_dir.as_ref().map(|dir| dir.join("spotify-native-off"));
         Self {
             output: Output::spawn(events.clone()),
             #[cfg(feature = "spotify-premium")]
@@ -168,7 +173,12 @@ impl Audio {
             disk: DiskCache::new(cache_dir.as_ref().map(|dir| dir.join("audio"))),
             matches: Matches::load(data_dir.map(|dir| dir.join("youtube-matches.json"))),
             streaming: Mutex::new(None),
-            native_refusals: AtomicU32::new(0),
+            native_refusals: AtomicU32::new(if native_recently_refused(native_off_marker.as_deref()) {
+                NATIVE_REFUSALS_TO_GIVE_UP
+            } else {
+                0
+            }),
+            native_off_marker,
             background_slots: Semaphore::new(BACKGROUND_YTDLP),
             visible_turn: watch::Sender::new(0),
             hover_turn: watch::Sender::new(0),
@@ -478,7 +488,14 @@ impl Audio {
     /// as faixas do Spotify vão direto pelo YouTube, onde ganham pré-carga e início rápido.
     /// Devolve `true` quando é hora de desistir.
     pub fn note_native_refused(&self) -> bool {
-        self.native_refusals.fetch_add(1, Ordering::SeqCst) + 1 == NATIVE_REFUSALS_TO_GIVE_UP
+        let give_up = self.native_refusals.fetch_add(1, Ordering::SeqCst) + 1 == NATIVE_REFUSALS_TO_GIVE_UP;
+        if give_up {
+            // Lembra por 24 h: abrir o app de novo não gasta mais duas tentativas de ~3 s.
+            if let Some(marker) = &self.native_off_marker {
+                let _ = std::fs::write(marker, b"");
+            }
+        }
+        give_up
     }
 
     pub fn native_disabled(&self) -> bool {
@@ -599,6 +616,15 @@ impl Audio {
             f(native);
         }
     }
+}
+
+/// O Spotify recusou o librespot há menos de [`NATIVE_OFF_FOR`]?
+fn native_recently_refused(marker: Option<&Path>) -> bool {
+    let age = marker
+        .and_then(|m| std::fs::metadata(m).ok())
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|modified| modified.elapsed().ok());
+    age.is_some_and(|age| age < NATIVE_OFF_FOR)
 }
 
 /// Quantas versões mostramos em "Escolher outra versão".

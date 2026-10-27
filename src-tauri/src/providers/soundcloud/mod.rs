@@ -53,6 +53,15 @@ pub struct SoundcloudProvider {
 }
 
 impl SoundcloudProvider {
+    /// Link público de uma playlist (`soundcloud.com/<artista>/sets/<nome>`) → a playlist, com id.
+    pub async fn resolve_playlist(&self, link: &str) -> Result<Playlist> {
+        let playlist: ScPlaylist = self
+            .get("/resolve", &[("url", link)])
+            .await
+            .map_err(|_| Error::Other("não achei essa playlist no SoundCloud. Ela é pública?".into()))?;
+        Ok(playlist.into_playlist())
+    }
+
     pub fn new(app: AppHandle, http: reqwest::Client) -> Self {
         Self { app, http, client_id: Mutex::new(None) }
     }
