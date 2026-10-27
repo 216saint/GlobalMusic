@@ -130,11 +130,17 @@ impl MusicProvider for YoutubeMusicProvider {
 
     async fn search_tracks(&self, query: &str, limit: u32) -> Result<Vec<Track>> {
         // Busca pública: funciona sem conta. Logado, os resultados levam em conta o gosto da pessoa.
-        let payload = json!({ "query": query, "params": innertube::SONGS_FILTER });
-        let response = self.call("search", payload, self.is_logged_in()).await?;
-        let mut tracks = innertube::parse_tracks(&response);
-        tracks.truncate(limit as usize);
-        Ok(tracks)
+        // "Músicas" e "Vídeos" ao mesmo tempo: muita coisa só existe como vídeo enviado por alguém
+        // (versões slowed, mashups, remixes de fã) e não aparece no filtro de músicas.
+        let logged_in = self.is_logged_in();
+        let search = |filter: &'static str| self.call("search", json!({ "query": query, "params": filter }), logged_in);
+        let (songs, videos) = futures::join!(search(innertube::SONGS_FILTER), search(innertube::VIDEOS_FILTER));
+        let songs = songs.map(|r| innertube::parse_tracks(&r));
+        let videos = videos.map(|r| innertube::parse_tracks(&r));
+        if let (Err(e), Err(_)) = (&songs, &videos) {
+            return Err(Error::Other(e.to_string()));
+        }
+        Ok(innertube::interleave(songs.unwrap_or_default(), videos.unwrap_or_default(), limit as usize))
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {
@@ -153,6 +159,7 @@ impl MusicProvider for YoutubeMusicProvider {
                     owner: None,
                     track_count: None,
                     artwork: None,
+                    url: None,
                 },
             );
         }

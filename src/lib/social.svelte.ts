@@ -1,36 +1,13 @@
 // Conta GlobalMusic, perfil e amigos (Svelte 5 runes). Fala com o servidor social pelo Rust.
 
 import { api, errorMessage } from "./api";
+import { squareJpegBytes } from "./image";
 import type { FriendList, LoginProvider, Me, PublicUser } from "./types";
 
 const EMPTY_FRIENDS: FriendList = { friends: [], incoming: [], outgoing: [] };
 /** Lado da foto enviada. O servidor reduz para 256 px; mandar maior que isso só gasta rede. */
 const AVATAR_PX = 512;
 const FRIENDS_REFRESH_MS = 60_000;
-
-/**
- * Recorta a foto no centro (quadrada), reduz e converte para JPEG no próprio app.
- * Assim uma foto de celular de 8 MB vira ~60 KB antes de sair do computador.
- */
-async function toAvatarJpeg(file: File): Promise<Uint8Array> {
-  let bitmap: ImageBitmap;
-  try {
-    bitmap = await createImageBitmap(file);
-  } catch {
-    throw new Error("Não deu para ler essa imagem. Use PNG, JPEG, WebP ou GIF.");
-  }
-  const side = Math.min(bitmap.width, bitmap.height);
-  const size = Math.min(AVATAR_PX, side);
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  canvas
-    .getContext("2d")!
-    .drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
-  bitmap.close();
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-  if (!blob) throw new Error("Não deu para converter a imagem.");
-  return new Uint8Array(await blob.arrayBuffer());
-}
 
 class SocialStore {
   me = $state<Me | null>(null);
@@ -114,7 +91,7 @@ class SocialStore {
   }
 
   async uploadAvatar(file: File) {
-    const me = await this.#run("avatar", async () => api.uploadAvatar(await toAvatarJpeg(file)));
+    const me = await this.#run("avatar", async () => api.uploadAvatar(await squareJpegBytes(file, AVATAR_PX)));
     if (me) this.me = me;
   }
 

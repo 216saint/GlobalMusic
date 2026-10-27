@@ -75,6 +75,10 @@ pub struct Playlist {
     pub owner: Option<String>,
     pub track_count: Option<u32>,
     pub artwork: Option<Artwork>,
+    /// Link público da playlist, quando ele não sai do id (o SoundCloud). Spotify e YouTube Music
+    /// montam o link pelo id (ver `playlistUrl` na UI).
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// Resultado de uma operação feita em paralelo nas fontes: cada fonte responde

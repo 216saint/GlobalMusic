@@ -34,6 +34,8 @@ export interface Playlist {
   owner: string | null;
   trackCount: number | null;
   artwork: Artwork | null;
+  /** Link público quando não dá para montar pelo id (SoundCloud). */
+  url?: string | null;
 }
 
 /** Playlist criada no GlobalMusic: faixas de qualquer fonte, sem precisar de conta. */
@@ -41,6 +43,15 @@ export interface LocalPlaylist {
   id: string;
   name: string;
   tracks: Track[];
+  /** Foto escolhida pela pessoa (data URL JPEG); sem ela, mosaico das capas. */
+  cover?: string | null;
+}
+
+/** Resposta de "importar por link": as listas atualizadas e o nome do que entrou. */
+export interface ImportOutcome {
+  name: string;
+  imported: Playlist[];
+  locals: LocalPlaylist[];
 }
 
 export interface SourceResults<T> {
@@ -67,6 +78,14 @@ export interface FavoriteResult {
 }
 
 /** Link público da faixa no serviço de origem (quando dá para montar só com o ID). */
+/** Link público de uma playlist de serviço (as coleções de curtidas são privadas: sem link). */
+export function playlistUrl(playlist: Playlist): string | null {
+  if (isLikedCollection(playlist)) return null;
+  if (playlist.source === "spotify") return `https://open.spotify.com/playlist/${playlist.id}`;
+  if (playlist.source === "youtube_music") return `https://music.youtube.com/playlist?list=${playlist.id}`;
+  return playlist.url ?? null;
+}
+
 export function trackUrl(track: Track): string | null {
   if (track.source === "spotify") return `https://open.spotify.com/track/${track.id}`;
   if (track.source === "youtube_music") return `https://music.youtube.com/watch?v=${track.id}`;

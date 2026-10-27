@@ -92,6 +92,8 @@ pub fn run() {
             commands::remove_imported_playlist,
             commands::local_playlists,
             commands::create_local_playlist,
+            commands::edit_local_playlist,
+            commands::share_local_playlist,
             commands::add_to_local_playlist,
             commands::remove_from_local_playlist,
             commands::delete_local_playlist,

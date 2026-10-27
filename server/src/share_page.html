@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} · GlobalMusic</title>
+<meta property="og:title" content="{name}">
+<meta property="og:description" content="Playlist de {owner} no GlobalMusic · {count} músicas">
+<style>
+  :root {{ color-scheme: dark; --violet: #7b6cff; --ink: #f5f4ff; --ink-2: rgba(245,244,255,.68); }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; min-height: 100vh; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; color: var(--ink);
+         background: radial-gradient(ellipse at top, #2b2547, #16151d 70%); }}
+  main {{ max-width: 640px; margin: 0 auto; padding: 40px 16px 56px; }}
+  header {{ display: flex; gap: 20px; align-items: center; }}
+  .cover {{ width: 120px; height: 120px; border-radius: 18px; object-fit: cover; flex: none; }}
+  h1 {{ margin: 0 0 4px; font-size: 26px; }}
+  p {{ margin: 0; color: var(--ink-2); }}
+  .how {{ margin: 28px 0; padding: 16px; border-radius: 16px; background: rgba(255,255,255,.06);
+          border: 1px solid rgba(255,255,255,.13); }}
+  .how p + p {{ margin-top: 8px; }}
+  code {{ display: block; margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,.3);
+          color: var(--ink); word-break: break-all; user-select: all; }}
+  a.button {{ display: inline-block; margin-top: 14px; padding: 10px 16px; border-radius: 12px; background: var(--violet);
+              color: #fff; font-weight: 600; text-decoration: none; }}
+  ol {{ margin: 0; padding-left: 22px; }}
+  li {{ padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.07); }}
+  li b {{ display: block; font-weight: 600; }}
+  li span {{ color: var(--ink-2); font-size: 13px; }}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    {cover}
+    <div>
+      <h1>{name}</h1>
+      <p>Playlist de {owner} no GlobalMusic · {count} músicas</p>
+    </div>
+  </header>
+  <section class="how">
+    <p><b>Para ouvir:</b> no GlobalMusic, clique em <b>Nova playlist</b> → <b>Importar por link</b> e cole este link:</p>
+    <code>{link}</code>
+    <p>Ainda não tem o GlobalMusic? É grátis e leve, e junta Spotify, YouTube Music e SoundCloud num lugar só.</p>
+    <a class="button" href="{download}">Baixar o GlobalMusic</a>
+  </section>
+  <ol>{items}</ol>
+</main>
+</body>
+</html>

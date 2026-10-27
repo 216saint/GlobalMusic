@@ -10,6 +10,7 @@ use crate::aggregate;
 use crate::audio::{AudioEvent, PrepareReason};
 use crate::imports::{self, Link};
 use crate::local_playlists::LocalPlaylist;
+use crate::social::SharedPlaylist;
 use crate::lyrics::Lyrics;
 use crate::error::{Error, Result};
 use crate::models::{AccountStatus, Playlist, Source, SourceResults, Track};
@@ -50,7 +51,7 @@ pub async fn playlist_tracks(state: State<'_, AppState>, source: Source, playlis
     if source == Source::Spotify && state.imports.contains(source, &playlist_id).await {
         return match state.providers.spotify.shared_playlist_tracks(&playlist_id).await {
             // Sem conta do Spotify: lê a página pública da playlist (as faixas tocam pelo YouTube).
-            Err(Error::NotConnected(_)) => imports::spotify_embed_tracks(&state.http, &playlist_id).await,
+            Err(Error::NotConnected(_)) => imports::spotify_public_playlist(&state.http, &playlist_id).await,
             other => other,
         };
     }
@@ -261,16 +262,44 @@ pub async fn imported_playlists(state: State<'_, AppState>) -> Result<Vec<Playli
     Ok(state.imports.list().await)
 }
 
-/// Importa a playlist de um link do Spotify, do YouTube Music ou do SoundCloud.
+/// Resultado de importar por link: as duas listas (só uma muda) e o nome do que entrou.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOutcome {
+    name: String,
+    imported: Vec<Playlist>,
+    locals: Vec<LocalPlaylist>,
+}
+
+/// Importa a playlist de um link do Spotify, do YouTube Music, do SoundCloud ou do GlobalMusic.
+/// Uma playlist do GlobalMusic compartilhada vira uma cópia sua (dá para editar à vontade).
 #[tauri::command]
-pub async fn import_playlist(state: State<'_, AppState>, link: String) -> Result<Vec<Playlist>> {
+pub async fn import_playlist(state: State<'_, AppState>, link: String) -> Result<ImportOutcome> {
     let playlist = match imports::parse_link(&link)? {
         Link::Spotify(id) => imports::describe(&state.http, Source::Spotify, &id).await?,
         Link::YoutubeMusic(id) => imports::describe(&state.http, Source::YoutubeMusic, &id).await?,
         Link::Soundcloud(url) => state.providers.soundcloud.resolve_playlist(&url).await?,
+        Link::GlobalMusic(code) => {
+            let shared = state.social.shared_playlist(&code).await?;
+            log::info!("playlist do GlobalMusic importada: \"{}\" ({} faixas)", shared.name, shared.tracks.len());
+            let locals = state.local_playlists.create(&shared.name, shared.tracks, shared.cover)?;
+            return Ok(ImportOutcome { name: shared.name, imported: state.imports.list().await, locals });
+        }
     };
     log::info!("playlist importada: \"{}\" ({})", playlist.name, playlist.source.label());
-    Ok(state.imports.add(playlist).await)
+    let name = playlist.name.clone();
+    Ok(ImportOutcome { name, imported: state.imports.add(playlist).await, locals: state.local_playlists.list() })
+}
+
+/// Compartilha uma playlist do GlobalMusic: guarda uma cópia no servidor e devolve o link.
+#[tauri::command]
+pub async fn share_local_playlist(state: State<'_, AppState>, id: String) -> Result<String> {
+    let playlist = state.local_playlists.get(&id).ok_or_else(|| Error::Other("essa playlist não existe mais".into()))?;
+    if playlist.tracks.is_empty() {
+        return Err(Error::Other("adicione músicas antes de compartilhar".into()));
+    }
+    let shared = SharedPlaylist { name: playlist.name, tracks: playlist.tracks, cover: playlist.cover };
+    Ok(state.social.share_playlist(&shared).await?.url)
 }
 
 #[tauri::command]
@@ -286,7 +315,21 @@ pub async fn local_playlists(state: State<'_, AppState>) -> Result<Vec<LocalPlay
 
 #[tauri::command]
 pub async fn create_local_playlist(state: State<'_, AppState>, name: String, tracks: Vec<Track>) -> Result<Vec<LocalPlaylist>> {
-    state.local_playlists.create(&name, tracks)
+    state.local_playlists.create(&name, tracks, None)
+}
+
+/// Nome e/ou foto (data URL JPEG). `remove_cover` tira a foto (um `null` não serve para isso: o
+/// JSON não distingue "sem mudança" de "sem foto").
+#[tauri::command]
+pub async fn edit_local_playlist(
+    state: State<'_, AppState>,
+    id: String,
+    name: Option<String>,
+    cover: Option<String>,
+    remove_cover: Option<bool>,
+) -> Result<Vec<LocalPlaylist>> {
+    let cover = if remove_cover == Some(true) { Some(None) } else { cover.map(Some) };
+    state.local_playlists.edit(&id, name.as_deref(), cover)
 }
 
 #[tauri::command]

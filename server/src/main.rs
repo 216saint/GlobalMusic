@@ -1,4 +1,5 @@
-//! Servidor social do GlobalMusic: contas (Discord/Spotify), perfis com foto e amizades.
+//! Servidor social do GlobalMusic: contas (Discord/Spotify), perfis com foto, amizades e playlists
+//! compartilhadas por link.
 //! Desenho e motivos: docs/decisoes/0008-servidor-social.md.
 //!
 //! Configuração por variáveis de ambiente (na VPS: /etc/globalmusic/api.env):
@@ -12,6 +13,7 @@ mod auth;
 mod error;
 mod friends;
 mod limit;
+mod playlists;
 mod users;
 
 use std::path::PathBuf;
@@ -102,6 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/users/search", get(users::search))
         .route("/friends", get(friends::list))
         .route("/friends/{username}", post(friends::add).merge(delete(friends::remove)))
+        .route("/playlists", post(playlists::share).layer(DefaultBodyLimit::max(playlists::SHARE_MAX_BYTES)))
+        .route("/playlists/{code}", get(playlists::get))
+        .route("/p/{code}", get(playlists::page))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), limit::middleware))
         .with_state(state);

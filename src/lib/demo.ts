@@ -177,10 +177,15 @@ const commands: Record<string, (args: any) => unknown> = {
   remove_from_local_playlist: ({ id, index }) =>
     (locals = locals.map((p) => (p.id === id ? { ...p, tracks: p.tracks.filter((_, i) => i !== index) } : p))),
   delete_local_playlist: ({ id }) => (locals = locals.filter((p) => p.id !== id)),
+  edit_local_playlist: ({ id, name, cover, removeCover }) =>
+    (locals = locals.map((p) =>
+      p.id === id ? { ...p, name: name ?? p.name, cover: removeCover ? null : (cover ?? p.cover) } : p,
+    )),
+  share_local_playlist: ({ id }) => `https://api.globalmusic.216saint.com.br/p/demo${id}`,
   import_playlist: ({ link }) => {
     const source: Source = link.includes("spotify") ? "spotify" : link.includes("soundcloud") ? "soundcloud" : "youtube_music";
     imported = [{ id: `imp${imported.length}`, source, name: "Playlist importada", owner: null, trackCount: null, artwork: null }, ...imported];
-    return imported;
+    return { name: "Playlist importada", imported, locals };
   },
   remove_imported_playlist: ({ source, id }) => (imported = imported.filter((p) => !(p.source === source && p.id === id))),
   accounts: () => accounts,

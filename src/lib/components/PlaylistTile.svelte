@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { app } from "$lib/app.svelte";
   import type { Playlist } from "$lib/types";
   import { SOURCE_LABEL, isLikedCollection } from "$lib/types";
   import Artwork from "./Artwork.svelte";
@@ -11,7 +12,12 @@
 </script>
 
 <div class="wrap">
-<button class="tile" onclick={onopen} title="{playlist.name} — {SOURCE_LABEL[playlist.source]}">
+<button
+  class="tile"
+  onclick={onopen}
+  oncontextmenu={(e) => app.openPlaylistMenu({ kind: "service", playlist }, e)}
+  title="{playlist.name} — {SOURCE_LABEL[playlist.source]}"
+>
   <span class="cover">
     {#if isLikedCollection(playlist)}
       <LikedCover source={playlist.source} />

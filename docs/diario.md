@@ -535,6 +535,31 @@ macOS exige isso.
 - Maximizada ou em tela cheia, a janela perde os cantos arredondados, que deixavam ver o fundo nas quinas.
 - "Buscar atualizações" no rodapé do Perfil (o estado é compartilhado com o card em `updates.svelte.ts`).
 
+**0.6.1:**
+- **Capas nas playlists de outras pessoas.** Com Client ID próprio (Development Mode), o Spotify recusa
+  (403) a leitura da playlist e também o `GET /tracks?ids=` das capas. Agora a ordem é: o token do client
+  oficial (o de reprodução), depois a página pública da playlist, com as capas pela prévia (oEmbed) de
+  cada música, 16 em paralelo e guardadas na memória enquanto o app estiver aberto. Sem conta, o mesmo
+  caminho.
+- **Foto e nome nas playlists do GlobalMusic.** A foto é recortada e reduzida para 512 px no app
+  (`image.ts`, o mesmo código da foto de perfil) e guardada como data URL junto da playlist. Para tirar a
+  foto há um campo próprio (`removeCover`), porque em JSON um `null` não diferencia "não mexer" de "sem foto".
+- **Compartilhar.** O servidor guarda uma cópia da playlist (migração `0003`) e devolve
+  `https://api.globalmusic.216saint.com.br/p/<código>`. Colado em "Importar por link", o link vira uma
+  cópia na biblioteca de quem recebeu. Aberto no navegador, mostra uma página com as músicas e o link
+  de download. Compartilhar exige a conta GlobalMusic, para o servidor não virar depósito anônimo (limite
+  de 300 por pessoa). Playlists de serviço compartilham o próprio link do Spotify, YouTube Music ou SoundCloud.
+- **Busca acha vídeos.** A busca do YouTube Music só usava o filtro "Músicas", e muita coisa só existe
+  como vídeo enviado por alguém (versões slowed, mashups, remixes de fã). Agora "Músicas" e "Vídeos" são
+  buscados ao mesmo tempo e intercalados, sem repetir. Nos vídeos, o "artista" é o canal
+  (`MUSIC_PAGE_TYPE_USER_CHANNEL`).
+- **Lista atualizada ao voltar para o app.** A playlist aberta era lida só uma vez: curtir algo no site do
+  YouTube Music não aparecia. Ao recuperar o foco (depois de 20 s), a playlist aberta e a biblioteca são
+  lidas de novo, sem piscar a tela.
+- **Botão direito.** O menu padrão da WebView (Voltar, Atualizar, Imprimir, Compartilhar com o Windows)
+  foi desligado, exceto em campos de texto. Playlists ganharam menu próprio: tocar, abrir, editar,
+  compartilhar, apagar e tirar da biblioteca.
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 

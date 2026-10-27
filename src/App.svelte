@@ -15,6 +15,15 @@
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import VersionPicker from "$lib/components/VersionPicker.svelte";
   import NewPlaylist from "$lib/components/NewPlaylist.svelte";
+  import EditPlaylist from "$lib/components/EditPlaylist.svelte";
+  import PlaylistMenu from "$lib/components/PlaylistMenu.svelte";
+
+  /** O menu padrão do navegador (Voltar, Atualizar, Imprimir, Compartilhar…) não faz sentido num app.
+   *  Fica só em campos de texto, onde copiar e colar são úteis; faixas e playlists têm menus próprios. */
+  function blockBrowserMenu(event: MouseEvent) {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest("input, textarea, [contenteditable='true']")) event.preventDefault();
+  }
 
   onMount(() => {
     void app.init();
@@ -35,6 +44,8 @@
     await win.onResized(() => void update());
   }
 </script>
+
+<svelte:window oncontextmenu={blockBrowserMenu} onfocus={() => app.refreshStale()} />
 
 <div class="window">
   <Ambient />
@@ -60,6 +71,10 @@
   <UpdateCard />
   <ContextMenu />
   <VersionPicker />
+  <PlaylistMenu />
+  {#if app.editing}
+    <EditPlaylist playlist={app.editing} />
+  {/if}
   {#if app.creating}
     <NewPlaylist initial={app.creating} />
   {/if}

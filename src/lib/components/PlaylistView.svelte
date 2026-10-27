@@ -4,6 +4,8 @@
   import Heart from "@lucide/svelte/icons/heart";
   import Play from "@lucide/svelte/icons/play";
   import X from "@lucide/svelte/icons/x";
+  import Pencil from "@lucide/svelte/icons/pencil";
+  import Share2 from "@lucide/svelte/icons/share-2";
   import { app, type OpenedPlaylist } from "$lib/app.svelte";
   import { SOURCE_LABEL, isLikedCollection } from "$lib/types";
   import Artwork from "./Artwork.svelte";
@@ -15,6 +17,9 @@
 
   let { opened }: { opened: OpenedPlaylist } = $props();
 
+  // A playlist do GlobalMusic aberta (para editar e compartilhar).
+  const local = $derived(opened.kind === "local" ? app.locals.find((p) => p.id === opened.id) : undefined);
+
   const isCurrent = (id: string, source: string) => app.player.current?.id === id && app.player.current?.source === source;
 </script>
 
@@ -23,7 +28,7 @@
     {#if opened.kind === "favorites"}
       <span class="fav-art"><Heart size={30} fill="currentColor" strokeWidth={0} /></span>
     {:else if opened.kind === "local"}
-      <LocalCover tracks={opened.tracks} size="72px" />
+      <LocalCover tracks={opened.tracks} cover={local?.cover} size="72px" />
     {:else if opened.source && isLikedCollection(opened)}
       <LikedCover source={opened.source} size="72px" />
     {:else}
@@ -43,6 +48,19 @@
         {#if !opened.loading && !opened.error} · {opened.tracks.length} {opened.tracks.length === 1 ? "música" : "músicas"}{/if}
       </p>
     </div>
+    {#if local}
+      <button class="tool" aria-label="Editar nome e foto" title="Editar nome e foto" onclick={() => (app.editing = local)}>
+        <Pencil size={16} />
+      </button>
+      <button class="tool" aria-label="Compartilhar" title="Compartilhar (copiar link)" onclick={() => app.sharePlaylist(local)}>
+        <Share2 size={16} />
+      </button>
+    {:else if opened.link}
+      {@const link = opened.link}
+      <button class="tool" aria-label="Compartilhar" title="Compartilhar (copiar link)" onclick={() => app.copyLink(link)}>
+        <Share2 size={16} />
+      </button>
+    {/if}
     {#if opened.tracks.length}
       <button class="play" aria-label="Tocar a lista" onclick={() => app.play(opened.tracks, 0, opened.title)}>
         <Play size={18} strokeWidth={2} />
@@ -124,6 +142,22 @@
     margin: 3px 0 0;
     font-size: 12px;
     color: var(--ink-3);
+  }
+
+  .tool {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 50%;
+    color: var(--ink-2);
+    border: 1px solid var(--edge);
+  }
+
+  .tool:hover {
+    color: var(--ink);
+    background: var(--tint-2);
   }
 
   .play {

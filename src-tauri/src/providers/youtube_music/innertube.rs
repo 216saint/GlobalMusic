@@ -20,6 +20,26 @@ pub const USER_AGENT: &str =
 
 /// Filtro "Músicas" da busca (o mesmo que o site usa ao clicar no chip "Músicas").
 pub const SONGS_FILTER: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+/// Filtro "Vídeos": inclui uploads de usuários (slowed, mashups…) que não estão no catálogo de músicas.
+pub const VIDEOS_FILTER: &str = "EgWKAQIQAWoMEA4QChADEAQQCRAF";
+
+/// Intercala músicas e vídeos (m1, v1, m2, v2…) sem repetir o mesmo vídeo, até `limit`.
+pub fn interleave(songs: Vec<Track>, videos: Vec<Track>, limit: usize) -> Vec<Track> {
+    let mut out: Vec<Track> = Vec::with_capacity(limit);
+    let (mut songs, mut videos) = (songs.into_iter(), videos.into_iter());
+    while out.len() < limit {
+        let (song, video) = (songs.next(), videos.next());
+        if song.is_none() && video.is_none() {
+            break;
+        }
+        for track in [song, video].into_iter().flatten() {
+            if out.len() < limit && !out.iter().any(|t| t.id == track.id) {
+                out.push(track);
+            }
+        }
+    }
+    out
+}
 
 /// Corpo padrão de toda requisição: quem somos (cliente web do YT Music) + o pedido.
 pub fn body(extra: Value) -> Value {
@@ -106,6 +126,10 @@ fn parse_track(item: &Value) -> Option<Track> {
         .map(|r| r.text.to_owned())
         .collect();
     if artists.is_empty() {
+        // Vídeo enviado por alguém: o "artista" é o canal.
+        artists.extend(meta.iter().filter(|r| r.page_type == Some("MUSIC_PAGE_TYPE_USER_CHANNEL")).map(|r| r.text.to_owned()));
+    }
+    if artists.is_empty() {
         // Uploads sem página de artista: o primeiro trecho antes de " • " é o canal/artista.
         if let Some(first) = meta.first().filter(|r| r.page_type.is_none() && parse_duration(r.text).is_none()) {
             artists.push(first.text.to_owned());
@@ -152,6 +176,7 @@ fn parse_playlist(item: &Value) -> Option<Playlist> {
         owner,
         track_count,
         artwork: artwork_of(&item["thumbnailRenderer"]["musicThumbnailRenderer"]),
+        url: None,
     })
 }
 
@@ -189,6 +214,29 @@ fn leading_number(text: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn video(id: &str) -> Track {
+        Track {
+            id: id.into(),
+            source: Source::YoutubeMusic,
+            title: id.into(),
+            artists: vec![],
+            album: None,
+            duration_ms: 0,
+            artwork: None,
+            isrc: None,
+        }
+    }
+
+    #[test]
+    fn interleaves_songs_and_videos_without_repeats() {
+        let ids = |tracks: Vec<Track>| tracks.into_iter().map(|t| t.id).collect::<Vec<_>>();
+        let songs = vec![video("m1"), video("m2"), video("m3")];
+        let videos = vec![video("v1"), video("m2"), video("v2")];
+        assert_eq!(ids(interleave(songs.clone(), videos.clone(), 10)), ["m1", "v1", "m2", "m3", "v2"]);
+        assert_eq!(ids(interleave(songs, videos, 3)), ["m1", "v1", "m2"]);
+        assert_eq!(ids(interleave(vec![], vec![video("v1")], 10)), ["v1"]);
+    }
 
     /// Resposta real da busca (2026-10-26), enxugada. Ver docs/diario.md.
     const SEARCH_FIXTURE: &str = include_str!("../fixtures/ytm_search.json");

@@ -153,35 +153,51 @@ impl SpotifyProvider {
         }
     }
 
-    /// Faixas de uma playlist (não as curtidas), lidas com `token`.
+    /// Faixas de uma playlist (não as curtidas), lidas com `token`. Se o Spotify recusar (403), tenta
+    /// na ordem: o token do client oficial (quando a pessoa usa Client ID próprio, que fica em
+    /// Development Mode e não lê playlists dos outros) e a página pública da playlist.
     async fn playlist_items(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
-        // Em 2026 o Spotify trocou `/tracks` por `/items` (o antigo responde 403).
-        // Tentamos o novo e, se ele não existir para este cliente, o antigo.
+        let refused = match self.read_items(token, playlist_id).await {
+            Ok(tracks) => return Ok(tracks),
+            Err(e) if http_status(&e) == Some(403) => e,
+            Err(e) => return Err(e),
+        };
+        let official = self.official_token().await;
+        if let Some(official) = official.as_deref().filter(|o| *o != token) {
+            match self.read_items(official, playlist_id).await {
+                Ok(tracks) => return Ok(tracks),
+                Err(e) => log::info!("Spotify: client oficial também recusou a playlist {playlist_id} ({e})"),
+            }
+        }
+        // Desde nov/2024 a Web API não entrega a apps de terceiros as playlists feitas pelo próprio
+        // Spotify ("This Is", Daily Mix…). A página pública do player incorporável entrega.
+        log::info!("Spotify: playlist {playlist_id} restrita na Web API ({refused}); lendo a página pública");
+        self.public_playlist_tracks(official.as_deref().unwrap_or(token), playlist_id).await
+    }
+
+    /// `/items` (o endpoint de 2026) e, se ele não existir para este cliente, o antigo `/tracks`.
+    async fn read_items(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
         let items_url = format!("/playlists/{playlist_id}/items?limit=100");
         let items: Vec<Item> = match self.all_pages_with(token, &items_url, MAX_TRACK_PAGES).await {
             Ok(items) => items,
             Err(e) if matches!(http_status(&e), Some(403 | 404)) => {
                 log::info!("Spotify: /items recusado ({e}); tentando /tracks");
                 let tracks_url = format!("/playlists/{playlist_id}/tracks?limit=100");
-                match self.all_pages_with(token, &tracks_url, MAX_TRACK_PAGES).await {
-                    Ok(items) => items,
-                    // Desde nov/2024 a Web API não entrega a apps de terceiros as playlists feitas pelo
-                    // próprio Spotify ("This Is", Daily Mix, Descobertas da Semana…). A página pública
-                    // do player incorporável entrega.
-                    Err(e) if http_status(&e) == Some(403) => {
-                        log::info!("Spotify: playlist {playlist_id} restrita na Web API; lendo a página pública");
-                        return self.public_playlist_tracks(token, playlist_id).await;
-                    }
-                    Err(e) => return Err(e),
-                }
+                self.all_pages_with(token, &tracks_url, MAX_TRACK_PAGES).await?
             }
             Err(e) => return Err(e),
         };
         Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
     }
 
-    /// Faixas pela página pública da playlist e, se der, completadas pela Web API (capa, álbum,
-    /// ISRC) em lotes de 50. Sem os detalhes, a playlist abre do mesmo jeito, só sem as capas.
+    /// Token do client oficial, só quando a pessoa usa Client ID próprio (senão o de sempre já é ele).
+    async fn official_token(&self) -> Option<String> {
+        self.client_id.custom()?;
+        self.valid_token(PLAYBACK_KEY, self.client_id.official()).await.ok().map(|(token, _)| token)
+    }
+
+    /// Faixas pela página pública da playlist, completadas pela Web API (capa, álbum, ISRC) em lotes
+    /// de 50. Se a Web API recusar, as capas vêm da prévia pública de cada música (`imports`).
     async fn public_playlist_tracks(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
         let tracks = crate::imports::spotify_embed_tracks(&self.http, playlist_id).await.map_err(|e| {
             log::warn!("Spotify: página pública da playlist {playlist_id} falhou: {e}");
@@ -193,8 +209,8 @@ impl SpotifyProvider {
             match self.get_json_with::<api::SeveralTracks>(token, &format!("/tracks?ids={ids}")).await {
                 Ok(found) => detailed.extend(found.tracks.into_iter().flatten().filter_map(api::SpTrack::into_track)),
                 Err(e) => {
-                    log::info!("Spotify: sem os detalhes das faixas ({e}); a playlist abre sem as capas");
-                    return Ok(tracks);
+                    log::info!("Spotify: sem os detalhes das faixas ({e}); capas pela prévia pública");
+                    return Ok(crate::imports::spotify_artwork(&self.http, tracks).await);
                 }
             }
         }
@@ -447,6 +463,7 @@ impl MusicProvider for SpotifyProvider {
             owner: None,
             track_count: liked.total,
             artwork: None,
+            url: None,
         }];
         let mine: Vec<SpPlaylist> = self.all_pages("/me/playlists?limit=50", MAX_PLAYLIST_PAGES).await?;
         // As automáticas do Spotify ("This Is", Daily Mix…) ficam de fora: a pessoa não as montou, e

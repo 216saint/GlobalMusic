@@ -12,9 +12,14 @@
 </script>
 
 <div class="wrap" role="presentation" onpointerleave={() => (confirming = false)}>
-  <button class="tile" onclick={() => app.openLocal(playlist)} title={playlist.name}>
+  <button
+    class="tile"
+    onclick={() => app.openLocal(playlist)}
+    oncontextmenu={(e) => app.openPlaylistMenu({ kind: "local", playlist }, e)}
+    title={playlist.name}
+  >
     <span class="cover">
-      <LocalCover tracks={playlist.tracks} />
+      <LocalCover tracks={playlist.tracks} cover={playlist.cover} />
       <span class="badge" title="Playlist do GlobalMusic"><Bars size={14} /></span>
     </span>
     <span class="name">{playlist.name}</span>

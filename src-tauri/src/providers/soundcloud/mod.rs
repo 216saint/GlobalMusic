@@ -230,6 +230,7 @@ impl MusicProvider for SoundcloudProvider {
             owner: Some(me.username),
             track_count: me.likes_count,
             artwork: None,
+            url: None,
         }];
         playlists.extend(mine.collection.into_iter().map(ScPlaylist::into_playlist));
         Ok(playlists)

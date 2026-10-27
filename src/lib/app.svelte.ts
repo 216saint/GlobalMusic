@@ -12,7 +12,7 @@ import type {
   SourceResults,
   Track,
 } from "./types";
-import { SOURCE_LABEL } from "./types";
+import { SOURCE_LABEL, playlistUrl } from "./types";
 
 export type Tab = "search" | "library";
 export type Filter = Source | "all";
@@ -26,6 +26,8 @@ export interface OpenedPlaylist {
   /** `null` = lista do próprio GlobalMusic (várias fontes). */
   source: Source | null;
   artworkUrl: string | null;
+  /** Link público (para compartilhar) de uma playlist de serviço. */
+  link?: string | null;
   tracks: Track[];
   loading: boolean;
   error: string | null;
@@ -56,6 +58,16 @@ export interface ContextMenu {
   y: number;
 }
 
+/** O que está sob o menu de playlist: uma do GlobalMusic ou uma de serviço (Spotify, YouTube Music…). */
+export type PlaylistTarget = { kind: "local"; playlist: LocalPlaylist } | { kind: "service"; playlist: Playlist };
+
+/** Menu do botão direito sobre uma playlist. */
+export interface PlaylistMenu {
+  target: PlaylistTarget;
+  x: number;
+  y: number;
+}
+
 const EMPTY_PLAYER: PlayerSnapshot = {
   current: null,
   route: null,
@@ -70,6 +82,9 @@ const EMPTY_PLAYER: PlayerSnapshot = {
   version: 0,
 };
 const TICK_MS = 500;
+/** Voltando ao app depois disso, a playlist aberta e a biblioteca são lidas de novo (a pessoa pode ter
+ *  curtido ou mudado algo no site do serviço enquanto isso). */
+const STALE_AFTER_MS = 20_000;
 const TOAST_MS = 5000;
 
 /** Intercala as fontes (A1, B1, C1, A2…) para "Todas" não virar três blocos. */
@@ -144,6 +159,9 @@ class AppStore {
   /** Curtidas do GlobalMusic (todas as fontes juntas). */
   favorites = $state<Track[]>([]);
   menu = $state<ContextMenu | null>(null);
+  playlistMenu = $state<PlaylistMenu | null>(null);
+  /** Janela "Editar playlist" (nome e foto) de uma playlist do GlobalMusic. */
+  editing = $state<LocalPlaylist | null>(null);
   /** Aviso curto no rodapé da janela (ex.: "Adicionada à fila"). */
   toast = $state<string | null>(null);
   /** A letra aparece no lugar da capa. */
@@ -153,6 +171,9 @@ class AppStore {
 
   #searchSeq = 0;
   #playlistSeq = 0;
+  /** Quando a playlist aberta e a biblioteca foram lidas pela última vez. */
+  #openedAt = 0;
+  #libraryAt = 0;
   #errorTimer: ReturnType<typeof setTimeout> | undefined;
   #toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -179,8 +200,10 @@ class AppStore {
     if (!link.trim() || this.importing) return false;
     this.importing = true;
     try {
-      this.imported = await api.importPlaylist(link.trim());
-      this.notify(`"${this.imported[0].name}" entrou na sua biblioteca`);
+      const outcome = await api.importPlaylist(link.trim());
+      this.imported = outcome.imported;
+      this.locals = outcome.locals;
+      this.notify(`"${outcome.name}" entrou na sua biblioteca`);
       return true;
     } catch (e) {
       this.notify(errorMessage(e));
@@ -308,6 +331,26 @@ class AppStore {
 
   async loadLibrary() {
     this.playlists = await api.libraryPlaylists();
+    this.#libraryAt = Date.now();
+  }
+
+  /**
+   * A janela voltou a ter foco: o que pode ter mudado lá fora é lido de novo, sem piscar a tela
+   * (a lista antiga fica até a nova chegar).
+   */
+  async refreshStale() {
+    const now = Date.now();
+    if (now - this.#libraryAt > STALE_AFTER_MS) void this.loadLibrary().catch(() => {});
+    const opened = this.opened;
+    if (opened?.kind !== "playlist" || !opened.source || opened.loading || now - this.#openedAt < STALE_AFTER_MS) return;
+    const seq = this.#playlistSeq;
+    this.#openedAt = now;
+    try {
+      const tracks = await api.playlistTracks(opened.source, opened.id);
+      if (seq === this.#playlistSeq && this.opened) this.opened = { ...this.opened, tracks };
+    } catch {
+      // Sem rede agora: fica a lista que já estava na tela.
+    }
   }
 
   async loadAccounts() {
@@ -410,6 +453,56 @@ class AppStore {
     this.notify(`Playlist "${playlist.name}" apagada`);
   }
 
+  /** Nome e/ou foto de uma playlist do GlobalMusic. */
+  async editPlaylist(playlist: LocalPlaylist, changes: { name?: string; cover?: string; removeCover?: boolean }) {
+    try {
+      this.locals = await api.editLocalPlaylist(playlist.id, changes);
+      this.#refreshOpenedLocal();
+      return true;
+    } catch (e) {
+      this.notify(errorMessage(e));
+      return false;
+    }
+  }
+
+  /** Compartilha uma playlist do GlobalMusic: o servidor guarda uma cópia e o link vai para a área de transferência. */
+  async sharePlaylist(playlist: LocalPlaylist) {
+    try {
+      const url = await api.shareLocalPlaylist(playlist.id);
+      await this.copyLink(url, `Link de "${playlist.name}" copiado. Quem receber cola em Nova playlist → Importar por link`);
+    } catch (e) {
+      const message = errorMessage(e);
+      this.notify(message.includes("entre na sua conta") ? "Entre na sua conta GlobalMusic (Perfil) para compartilhar playlists" : message);
+    }
+  }
+
+  async copyLink(url: string, message = "Link copiado") {
+    try {
+      await navigator.clipboard.writeText(url);
+      this.notify(message);
+    } catch {
+      this.notify(url);
+    }
+  }
+
+  openPlaylistMenu(target: PlaylistTarget, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menu = null;
+    this.playlistMenu = { target, x: event.clientX, y: event.clientY };
+  }
+
+  /** Toca uma playlist de serviço sem abrir (carrega as faixas e começa da primeira). */
+  async playService(playlist: Playlist) {
+    try {
+      const tracks = await api.playlistTracks(playlist.source, playlist.id);
+      if (tracks.length) await this.play(tracks, 0, playlist.name);
+      else this.notify(`"${playlist.name}" está vazia`);
+    } catch (e) {
+      this.notify(errorMessage(e));
+    }
+  }
+
   openLocal(playlist: LocalPlaylist) {
     this.#playlistSeq++;
     this.opened = {
@@ -429,7 +522,7 @@ class AppStore {
     const opened = this.opened;
     if (opened?.kind !== "local") return;
     const fresh = this.locals.find((p) => p.id === opened.id);
-    if (fresh) this.opened = { ...opened, tracks: fresh.tracks };
+    if (fresh) this.opened = { ...opened, title: fresh.name, tracks: fresh.tracks };
   }
 
   #rememberPlayed(track: Track) {
@@ -447,6 +540,7 @@ class AppStore {
       title: playlist.name,
       source: playlist.source,
       artworkUrl: playlist.artwork?.thumb ?? null,
+      link: playlistUrl(playlist),
       tracks: [],
       loading: true,
       error: null,
@@ -454,6 +548,7 @@ class AppStore {
     try {
       const tracks = await api.playlistTracks(playlist.source, playlist.id);
       if (seq === this.#playlistSeq && this.opened) {
+        this.#openedAt = Date.now();
         this.opened = { ...this.opened, tracks, loading: false };
         this.prepareVisible(tracks);
       }
@@ -484,6 +579,8 @@ class AppStore {
 
   openMenu(track: Track, event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
+    this.playlistMenu = null;
     this.menu = { track, x: event.clientX, y: event.clientY };
   }
 

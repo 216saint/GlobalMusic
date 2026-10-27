@@ -130,6 +130,7 @@ impl SpPlaylist {
             owner: self.owner.and_then(|o| o.display_name),
             track_count: self.tracks.and_then(|t| t.total),
             artwork: self.images.as_deref().and_then(art),
+            url: None,
         }
     }
 }

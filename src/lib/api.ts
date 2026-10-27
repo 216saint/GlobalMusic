@@ -9,6 +9,7 @@ import type {
   Alternatives,
   FavoriteResult,
   FriendList,
+  ImportOutcome,
   LocalPlaylist,
   LoginProvider,
   Lyrics,
@@ -56,13 +57,18 @@ export const api = {
   libraryPlaylists: () => call<SourceResults<Playlist>[]>("library_playlists"),
   importedPlaylists: () => call<Playlist[]>("imported_playlists"),
   /** Importa por link (Spotify, YouTube Music ou SoundCloud); devolve as importadas. */
-  importPlaylist: (link: string) => call<Playlist[]>("import_playlist", { link }),
+  importPlaylist: (link: string) => call<ImportOutcome>("import_playlist", { link }),
   removeImportedPlaylist: (source: Source, id: string) => call<Playlist[]>("remove_imported_playlist", { source, id }),
   localPlaylists: () => call<LocalPlaylist[]>("local_playlists"),
   createLocalPlaylist: (name: string, tracks: Track[]) => call<LocalPlaylist[]>("create_local_playlist", { name, tracks }),
   addToLocalPlaylist: (id: string, tracks: Track[]) => call<LocalPlaylist[]>("add_to_local_playlist", { id, tracks }),
   removeFromLocalPlaylist: (id: string, index: number) => call<LocalPlaylist[]>("remove_from_local_playlist", { id, index }),
   deleteLocalPlaylist: (id: string) => call<LocalPlaylist[]>("delete_local_playlist", { id }),
+  /** Nome e/ou foto (data URL JPEG); `removeCover` tira a foto. */
+  editLocalPlaylist: (id: string, changes: { name?: string; cover?: string; removeCover?: boolean }) =>
+    call<LocalPlaylist[]>("edit_local_playlist", { id, ...changes }),
+  /** Guarda uma cópia no servidor do GlobalMusic e devolve o link (precisa da conta GlobalMusic). */
+  shareLocalPlaylist: (id: string) => call<string>("share_local_playlist", { id }),
   playlistTracks: (source: Source, playlistId: string) => call<Track[]>("playlist_tracks", { source, playlistId }),
 
   accounts: () => call<AccountStatus[]>("accounts"),

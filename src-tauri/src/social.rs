@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::OAUTH_PORT;
 use crate::error::{Error, Result};
+use crate::models::Track;
 
 const KEYRING_SERVICE: &str = "com.globalmusic.app";
 const KEYRING_SESSION: &str = "globalmusic-session";
@@ -77,6 +78,20 @@ pub struct FriendList {
     pub friends: Vec<PublicUser>,
     pub incoming: Vec<PublicUser>,
     pub outgoing: Vec<PublicUser>,
+}
+
+/// Playlist do GlobalMusic compartilhada: uma cópia guardada no servidor, aberta por um link.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedPlaylist {
+    pub name: String,
+    pub tracks: Vec<Track>,
+    pub cover: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShareLink {
+    pub url: String,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +252,16 @@ impl Social {
     pub async fn upload_avatar(&self, image: Vec<u8>) -> Result<Me> {
         let request = self.authed(Method::PUT, &["me", "avatar"])?.header("content-type", "application/octet-stream").body(image);
         Ok(self.send(request).await?.json().await?)
+    }
+
+    /// Guarda uma cópia da playlist no servidor e devolve o link para mandar a quem quiser.
+    pub async fn share_playlist(&self, playlist: &SharedPlaylist) -> Result<ShareLink> {
+        Ok(self.send(self.authed(Method::POST, &["playlists"])?.json(playlist)).await?.json().await?)
+    }
+
+    /// Abre uma playlist compartilhada (não precisa de conta).
+    pub async fn shared_playlist(&self, code: &str) -> Result<SharedPlaylist> {
+        Ok(self.send(self.http.get(self.url(&["playlists", code])?)).await?.json().await?)
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<PublicUser>> {

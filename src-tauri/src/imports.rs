@@ -23,6 +23,8 @@ pub enum Link {
     YoutubeMusic(String),
     /// O SoundCloud não põe o id no link: ele é resolvido pela API.
     Soundcloud(String),
+    /// Playlist do GlobalMusic compartilhada (`…/p/<código>`).
+    GlobalMusic(String),
 }
 
 /// Reconhece links de playlist dos três serviços (com ou sem `https://`, com parâmetros extras).
@@ -49,12 +51,20 @@ pub fn parse_link(text: &str) -> Result<Link> {
         "soundcloud.com" if segments.len() >= 3 && segments[1] == "sets" => {
             Ok(Link::Soundcloud(format!("https://soundcloud.com/{}/sets/{}", segments[0], segments[2])))
         }
+        host if is_globalmusic(host) && segments.len() == 2 && segments[0] == "p" => Ok(Link::GlobalMusic(segments[1].to_owned())),
         _ => Err(unrecognized()),
     }
 }
 
+/// O servidor do GlobalMusic (o mesmo domínio do servidor social, com ou sem o `api.`).
+fn is_globalmusic(host: &str) -> bool {
+    let api = url::Url::parse(crate::config::SOCIAL_API_URL).ok();
+    let api_host = api.as_ref().and_then(|u| u.host_str()).unwrap_or_default();
+    host == api_host || Some(host) == api_host.strip_prefix("api.")
+}
+
 fn unrecognized() -> Error {
-    Error::Other("não reconheci esse link. Cole o link de uma playlist do Spotify, do YouTube Music ou do SoundCloud".into())
+    Error::Other("não reconheci esse link. Cole o link de uma playlist do Spotify, do YouTube Music, do SoundCloud ou do GlobalMusic".into())
 }
 
 #[derive(Deserialize)]
@@ -82,6 +92,7 @@ pub async fn describe(http: &reqwest::Client, source: Source, id: &str) -> Resul
         owner: info.author_name,
         track_count: None,
         artwork: info.thumbnail_url.map(|url| Artwork { thumb: url.clone(), full: url }),
+        url: None,
     })
 }
 
@@ -101,6 +112,57 @@ pub async fn spotify_embed_tracks(http: &reqwest::Client, id: &str) -> Result<Ve
         return Err(Error::Other("conecte o Spotify no Perfil para abrir esta playlist".into()));
     }
     Ok(tracks)
+}
+
+/// Playlist pública do Spotify sem conta: faixas da página pública e capas pela prévia de cada música.
+pub async fn spotify_public_playlist(http: &reqwest::Client, id: &str) -> Result<Vec<Track>> {
+    let tracks = spotify_embed_tracks(http, id).await?;
+    Ok(spotify_artwork(http, tracks).await)
+}
+
+/// Pedidos de prévia ao mesmo tempo (cada um leva ~0,35 s): 80 faixas ficam prontas em ~2 s.
+const ARTWORK_PARALLEL: usize = 16;
+
+/// Capas por faixa já descobertas nesta sessão (abrir a mesma playlist de novo é instantâneo).
+static ARTWORK_CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Artwork>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Completa a capa das faixas do Spotify pela prévia pública de cada música (oEmbed), quando a Web API
+/// não entrega os detalhes. Faixa cuja prévia falhar continua sem capa.
+pub async fn spotify_artwork(http: &reqwest::Client, tracks: Vec<Track>) -> Vec<Track> {
+    use futures::stream::{self, StreamExt};
+    stream::iter(tracks)
+        .map(|mut track| async move {
+            if track.artwork.is_none() {
+                track.artwork = track_artwork(http, &track.id).await;
+            }
+            track
+        })
+        .buffered(ARTWORK_PARALLEL)
+        .collect()
+        .await
+}
+
+async fn track_artwork(http: &reqwest::Client, id: &str) -> Option<Artwork> {
+    if let Some(found) = ARTWORK_CACHE.lock().ok().and_then(|c| c.get(id).cloned()) {
+        return Some(found);
+    }
+    let page = format!("https://open.spotify.com/track/{id}");
+    let response = http
+        .get("https://open.spotify.com/oembed")
+        .query(&[("url", page.as_str())])
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .ok()?;
+    let thumb = response.json::<OEmbed>().await.ok()?.thumbnail_url?;
+    // Mesma imagem em 640 px (o id de tamanho faz parte do nome no CDN do Spotify).
+    let full = thumb.replace("ab67616d00001e02", "ab67616d0000b273");
+    let artwork = Artwork { thumb, full };
+    if let Ok(mut cache) = ARTWORK_CACHE.lock() {
+        cache.insert(id.to_owned(), artwork.clone());
+    }
+    Some(artwork)
 }
 
 #[derive(Deserialize)]
@@ -225,6 +287,11 @@ mod tests {
             parse_link("https://soundcloud.com/artista/sets/minha-lista?si=1&utm_source=x").unwrap(),
             Link::Soundcloud("https://soundcloud.com/artista/sets/minha-lista".into())
         );
+        assert_eq!(
+            parse_link("https://api.globalmusic.216saint.com.br/p/Ab3xYz9Q").unwrap(),
+            Link::GlobalMusic("Ab3xYz9Q".into())
+        );
+        assert_eq!(parse_link("globalmusic.216saint.com.br/p/Ab3xYz9Q").unwrap(), Link::GlobalMusic("Ab3xYz9Q".into()));
     }
 
     #[test]

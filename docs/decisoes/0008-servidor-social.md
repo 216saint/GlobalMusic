@@ -110,5 +110,13 @@ Cada fase sai como uma versão do app (pelo atualizador), com o servidor publica
 Atualizar o servidor: copiar `server/` para a VPS, `cargo build --release`, copiar o binário para
 `/opt/globalmusic-api/` e `sudo systemctl restart globalmusic-api`.
 
+### Playlists compartilhadas (0.6.1)
+
+- `POST /playlists` (com sessão) guarda uma cópia (nome, faixas em JSON, foto opcional) e devolve
+  `PUBLIC_URL/p/<código>`. São no máximo 300 por pessoa e 1 MB por pedido.
+- `GET /playlists/<código>` devolve o JSON que o app importa. `GET /p/<código>` devolve a página HTML
+  para quem abrir o link no navegador.
+- Antes de cada migração, um backup do banco: `api.db.bak-<data>` em `/var/lib/globalmusic/`.
+
 Login pelo Discord: liga sozinho quando `DISCORD_CLIENT_SECRET` é preenchido no `api.env` e o serviço
 reinicia. Não precisa de versão nova do app.

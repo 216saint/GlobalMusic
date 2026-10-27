@@ -10,6 +10,9 @@ use crate::error::{Error, Result};
 use crate::models::Track;
 
 const MAX_NAME: usize = 100;
+/// A foto vem já reduzida pela UI (JPEG de 512 px, ~60 KB); o limite só barra algo fora do comum.
+const MAX_COVER_BYTES: usize = 400 * 1024;
+const COVER_PREFIX: &str = "data:image/jpeg;base64,";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +20,9 @@ pub struct LocalPlaylist {
     pub id: String,
     pub name: String,
     pub tracks: Vec<Track>,
+    /// Foto escolhida pela pessoa (data URL JPEG). Sem ela, a capa é o mosaico das músicas.
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 pub struct LocalPlaylists {
@@ -38,15 +44,12 @@ impl LocalPlaylists {
         self.list.lock().map(|l| l.clone()).unwrap_or_default()
     }
 
-    pub fn create(&self, name: &str, tracks: Vec<Track>) -> Result<Vec<LocalPlaylist>> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(Error::Other("dê um nome para a playlist".into()));
-        }
+    pub fn create(&self, name: &str, tracks: Vec<Track>, cover: Option<String>) -> Result<Vec<LocalPlaylist>> {
         let playlist = LocalPlaylist {
             id: format!("{:016x}", rand::random::<u64>()),
-            name: name.chars().take(MAX_NAME).collect(),
+            name: clean_name(name)?,
             tracks: without_repeats(tracks),
+            cover: cover.map(checked_cover).transpose()?,
         };
         self.change(|list| {
             list.insert(0, playlist);
@@ -65,6 +68,26 @@ impl LocalPlaylists {
             }
             Ok(())
         })
+    }
+
+    /// Muda o nome e/ou a foto (`cover: Some(None)` tira a foto).
+    pub fn edit(&self, id: &str, name: Option<&str>, cover: Option<Option<String>>) -> Result<Vec<LocalPlaylist>> {
+        let name = name.map(clean_name).transpose()?;
+        let cover = cover.map(|c| c.map(checked_cover).transpose()).transpose()?;
+        self.change(|list| {
+            let playlist = find(list, id)?;
+            if let Some(name) = name {
+                playlist.name = name;
+            }
+            if let Some(cover) = cover {
+                playlist.cover = cover;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn get(&self, id: &str) -> Option<LocalPlaylist> {
+        self.list.lock().ok()?.iter().find(|p| p.id == id).cloned()
     }
 
     pub fn remove_track(&self, id: &str, index: usize) -> Result<Vec<LocalPlaylist>> {
@@ -106,6 +129,21 @@ fn find<'a>(list: &'a mut [LocalPlaylist], id: &str) -> Result<&'a mut LocalPlay
     list.iter_mut().find(|p| p.id == id).ok_or_else(|| Error::Other("essa playlist não existe mais".into()))
 }
 
+fn clean_name(name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Other("dê um nome para a playlist".into()));
+    }
+    Ok(name.chars().take(MAX_NAME).collect())
+}
+
+fn checked_cover(cover: String) -> Result<String> {
+    if !cover.starts_with(COVER_PREFIX) || cover.len() > MAX_COVER_BYTES {
+        return Err(Error::Other("não deu para usar essa imagem; tente outra".into()));
+    }
+    Ok(cover)
+}
+
 fn same(a: &Track, b: &Track) -> bool {
     a.source == b.source && a.id == b.id
 }
@@ -141,9 +179,10 @@ mod tests {
     #[test]
     fn creates_adds_without_repeats_removes_and_deletes() {
         let store = LocalPlaylists::load(None);
-        assert!(store.create("  ", vec![]).is_err(), "sem nome não cria");
+        assert!(store.create("  ", vec![], None).is_err(), "sem nome não cria");
+        assert!(store.create("x", vec![], Some("data:text/html,oi".into())).is_err(), "só JPEG");
 
-        let list = store.create("Estudar", vec![track("a"), track("a"), track("b")]).unwrap();
+        let list = store.create("Estudar", vec![track("a"), track("a"), track("b")], None).unwrap();
         let id = list[0].id.clone();
         assert_eq!(list[0].tracks.len(), 2, "repetidas entram uma vez só");
 
@@ -152,6 +191,12 @@ mod tests {
 
         let list = store.remove_track(&id, 0).unwrap();
         assert_eq!(list[0].tracks[0].id, "b");
+
+        let photo = format!("{COVER_PREFIX}AAAA");
+        let list = store.edit(&id, Some("Foco"), Some(Some(photo.clone()))).unwrap();
+        assert_eq!((list[0].name.as_str(), list[0].cover.as_deref()), ("Foco", Some(photo.as_str())));
+        let list = store.edit(&id, None, Some(None)).unwrap();
+        assert_eq!((list[0].name.as_str(), list[0].cover.as_deref()), ("Foco", None), "tira só a foto");
 
         assert!(store.delete(&id).unwrap().is_empty());
         assert!(store.add(&id, vec![track("x")]).is_err());

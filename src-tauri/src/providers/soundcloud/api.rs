@@ -71,6 +71,7 @@ pub struct ScPlaylist {
     pub artwork_url: Option<String>,
     #[serde(default)]
     pub tracks: Vec<ScTrack>,
+    pub permalink_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +155,7 @@ impl ScPlaylist {
             owner: self.user.map(|u| u.username),
             track_count: self.track_count,
             artwork: self.artwork_url.as_deref().map(artwork::from_soundcloud),
+            url: self.permalink_url,
         }
     }
 }
