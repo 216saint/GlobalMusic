@@ -1,6 +1,6 @@
 [package]
 name = "globalmusic"
-version = "0.5.0"
+version = "0.6.0"
 description = "Player de música global e leve: Spotify, YouTube Music e SoundCloud."
 authors = ["GlobalMusic"]
 edition = "2024"
@@ -50,6 +50,10 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 
 # --- Spotify Premium (a Web API é chamada direto, sem SDK: ver providers/spotify) ---
 librespot = { version = "0.8", default-features = false, features = ["native-tls", "rodio-backend"], optional = true }
+
+# --- Teclas de mídia do teclado e controles de mídia do SO (Windows SMTC, macOS Now Playing,
+# Linux MPRIS). `use_zbus`: D-Bus em Rust puro, sem exigir a libdbus no Linux. ---
+souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
 
 # --- Discord Rich Presence (IPC local com o cliente do Discord) ---
 discord-rich-presence = "1"

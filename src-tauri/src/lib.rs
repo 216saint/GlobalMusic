@@ -7,7 +7,9 @@ mod config;
 mod error;
 mod favorites;
 mod imports;
+mod local_playlists;
 mod lyrics;
+mod media_keys;
 mod models;
 mod player;
 mod presence;
@@ -56,6 +58,7 @@ pub fn run() {
             app.manage(AppState::new(app.handle()));
             app.manage(Updates::default());
             window::create_main(app)?;
+            media_keys::setup(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -87,6 +90,11 @@ pub fn run() {
             commands::imported_playlists,
             commands::import_playlist,
             commands::remove_imported_playlist,
+            commands::local_playlists,
+            commands::create_local_playlist,
+            commands::add_to_local_playlist,
+            commands::remove_from_local_playlist,
+            commands::delete_local_playlist,
             updates::update_check,
             updates::update_install,
             social::social_me,

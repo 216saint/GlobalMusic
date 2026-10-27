@@ -7,16 +7,26 @@
   import ListStart from "@lucide/svelte/icons/list-start";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Replace from "@lucide/svelte/icons/replace";
+  import ListPlus from "@lucide/svelte/icons/list-plus";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import Plus from "@lucide/svelte/icons/plus";
   import { app } from "$lib/app.svelte";
   import { SOURCE_LABEL, trackUrl, type Track } from "$lib/types";
 
   const WIDTH = 270;
-  const HEIGHT = 230;
 
   const menu = $derived(app.menu);
+  // "Adicionar à playlist" abre a lista de playlists dentro do próprio menu.
+  let choosing = $state(false);
+  $effect(() => {
+    void menu;
+    choosing = false;
+  });
+  // Altura aproximada (para caber na janela): itens fixos + a lista de playlists, se aberta.
+  const height = $derived(270 + (choosing ? Math.min(app.locals.length + 1, 6) * 36 : 0));
   // Mantém o menu dentro da janela mesmo clicando perto das bordas.
   const left = $derived(menu ? Math.min(menu.x, window.innerWidth - WIDTH - 8) : 0);
-  const top = $derived(menu ? Math.min(menu.y, window.innerHeight - HEIGHT - 8) : 0);
+  const top = $derived(menu ? Math.max(8, Math.min(menu.y, window.innerHeight - height - 8)) : 0);
 
   // A faixa é lida ANTES de fechar o menu e passada para a ação. (O `{@const track}` do markup é
   // recalculado a partir de `app.menu` a cada leitura: lido depois de fechar, ele quebrava a ação.)
@@ -46,6 +56,22 @@
     <button role="menuitem" onclick={() => run((t) => app.enqueue(t))}>
       <ListEnd size={15} /> Adicionar à fila
     </button>
+    <button role="menuitem" aria-expanded={choosing} onclick={() => (choosing = !choosing)}>
+      <ListPlus size={15} /> Adicionar à playlist
+      <span class="chevron" class:open={choosing}><ChevronRight size={14} /></span>
+    </button>
+    {#if choosing}
+      <div class="playlists">
+        <button role="menuitem" onclick={() => run((t) => (app.creating = [t]))}>
+          <Plus size={15} /> Nova playlist…
+        </button>
+        {#each app.locals as playlist (playlist.id)}
+          <button role="menuitem" onclick={() => run((t) => app.addToPlaylist(playlist, [t]))}>
+            <span class="dot"></span><span class="label">{playlist.name}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     <button role="menuitem" onclick={() => run((t) => app.toggleFavorite(t))}>
       {#if liked}
         <HeartOff size={15} /> Descurtir (GlobalMusic e {SOURCE_LABEL[track.source]})
@@ -105,5 +131,39 @@
 
   button:hover {
     background: var(--tint-2);
+  }
+
+  .chevron {
+    display: grid;
+    margin-left: auto;
+    color: var(--ink-3);
+    transition: rotate 0.15s;
+  }
+
+  .chevron.open {
+    rotate: 90deg;
+  }
+
+  .playlists {
+    max-height: 216px;
+    overflow-y: auto;
+    margin: 0 0 4px 14px;
+    padding-left: 6px;
+    border-left: 1px solid var(--edge);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    margin: 0 4px 0 5px;
+    border-radius: 50%;
+    background: var(--violet-bright);
+  }
+
+  .label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

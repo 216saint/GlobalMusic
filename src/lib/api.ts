@@ -9,6 +9,7 @@ import type {
   Alternatives,
   FavoriteResult,
   FriendList,
+  LocalPlaylist,
   LoginProvider,
   Lyrics,
   Me,
@@ -57,6 +58,11 @@ export const api = {
   /** Importa por link (Spotify, YouTube Music ou SoundCloud); devolve as importadas. */
   importPlaylist: (link: string) => call<Playlist[]>("import_playlist", { link }),
   removeImportedPlaylist: (source: Source, id: string) => call<Playlist[]>("remove_imported_playlist", { source, id }),
+  localPlaylists: () => call<LocalPlaylist[]>("local_playlists"),
+  createLocalPlaylist: (name: string, tracks: Track[]) => call<LocalPlaylist[]>("create_local_playlist", { name, tracks }),
+  addToLocalPlaylist: (id: string, tracks: Track[]) => call<LocalPlaylist[]>("add_to_local_playlist", { id, tracks }),
+  removeFromLocalPlaylist: (id: string, index: number) => call<LocalPlaylist[]>("remove_from_local_playlist", { id, index }),
+  deleteLocalPlaylist: (id: string) => call<LocalPlaylist[]>("delete_local_playlist", { id }),
   playlistTracks: (source: Source, playlistId: string) => call<Track[]>("playlist_tracks", { source, playlistId }),
 
   accounts: () => call<AccountStatus[]>("accounts"),

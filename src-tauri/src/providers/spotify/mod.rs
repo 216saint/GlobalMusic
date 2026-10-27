@@ -27,6 +27,8 @@ const LIKED_ID: &str = "liked";
 /// Limites de paginação: o bastante para bibliotecas grandes sem gastar a cota à toa.
 const MAX_PLAYLIST_PAGES: usize = 4; // 4 × 50 playlists
 const MAX_TRACK_PAGES: usize = 10; // 10 × 100 (playlist) ou 10 × 50 (curtidas)
+/// Máximo de ids por chamada de `GET /tracks`.
+const SEVERAL_TRACKS: usize = 50;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -161,18 +163,42 @@ impl SpotifyProvider {
             Err(e) if matches!(http_status(&e), Some(403 | 404)) => {
                 log::info!("Spotify: /items recusado ({e}); tentando /tracks");
                 let tracks_url = format!("/playlists/{playlist_id}/tracks?limit=100");
-                self.all_pages_with(token, &tracks_url, MAX_TRACK_PAGES).await.map_err(|e| match http_status(&e) {
-                    Some(403) => Error::Other(
-                        "o Spotify não libera as faixas desta playlist para apps de terceiros \
-                         (playlists geradas pelo Spotify, como Daily Mix e Descobertas da Semana, são restritas)"
-                            .into(),
-                    ),
-                    _ => e,
-                })?
+                match self.all_pages_with(token, &tracks_url, MAX_TRACK_PAGES).await {
+                    Ok(items) => items,
+                    // Desde nov/2024 a Web API não entrega a apps de terceiros as playlists feitas pelo
+                    // próprio Spotify ("This Is", Daily Mix, Descobertas da Semana…). A página pública
+                    // do player incorporável entrega.
+                    Err(e) if http_status(&e) == Some(403) => {
+                        log::info!("Spotify: playlist {playlist_id} restrita na Web API; lendo a página pública");
+                        return self.public_playlist_tracks(token, playlist_id).await;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Err(e) => return Err(e),
         };
         Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
+    }
+
+    /// Faixas pela página pública da playlist e, se der, completadas pela Web API (capa, álbum,
+    /// ISRC) em lotes de 50. Sem os detalhes, a playlist abre do mesmo jeito, só sem as capas.
+    async fn public_playlist_tracks(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
+        let tracks = crate::imports::spotify_embed_tracks(&self.http, playlist_id).await.map_err(|e| {
+            log::warn!("Spotify: página pública da playlist {playlist_id} falhou: {e}");
+            Error::Other("o Spotify não liberou as faixas desta playlist agora. Tente de novo em instantes".into())
+        })?;
+        let mut detailed = Vec::with_capacity(tracks.len());
+        for chunk in tracks.chunks(SEVERAL_TRACKS) {
+            let ids = chunk.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(",");
+            match self.get_json_with::<api::SeveralTracks>(token, &format!("/tracks?ids={ids}")).await {
+                Ok(found) => detailed.extend(found.tracks.into_iter().flatten().filter_map(api::SpTrack::into_track)),
+                Err(e) => {
+                    log::info!("Spotify: sem os detalhes das faixas ({e}); a playlist abre sem as capas");
+                    return Ok(tracks);
+                }
+            }
+        }
+        Ok(if detailed.len() == tracks.len() { detailed } else { tracks })
     }
 
     /// Access token da Web API, renovando com o refresh token se precisar.
@@ -423,7 +449,9 @@ impl MusicProvider for SpotifyProvider {
             artwork: None,
         }];
         let mine: Vec<SpPlaylist> = self.all_pages("/me/playlists?limit=50", MAX_PLAYLIST_PAGES).await?;
-        playlists.extend(mine.into_iter().map(SpPlaylist::into_playlist));
+        // As automáticas do Spotify ("This Is", Daily Mix…) ficam de fora: a pessoa não as montou, e
+        // a Web API nem entrega as faixas delas.
+        playlists.extend(mine.into_iter().filter(|p| !p.by_spotify()).map(SpPlaylist::into_playlist));
         Ok(playlists)
     }
 

@@ -9,8 +9,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::aggregate;
 use crate::audio::{AudioEvent, PrepareReason};
 use crate::imports::{self, Link};
+use crate::local_playlists::LocalPlaylist;
 use crate::lyrics::Lyrics;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::models::{AccountStatus, Playlist, Source, SourceResults, Track};
 use crate::player::queue::Slot;
 use crate::player::routing::PlaybackRoute;
@@ -23,8 +24,10 @@ pub const PLAYER_EVENT: &str = "player://state";
 pub const PLAYER_ERROR_EVENT: &str = "player://error";
 /// Aviso curto do player para a UI (ex.: "Pulei um trecho sem música").
 pub const PLAYER_NOTICE_EVENT: &str = "player://notice";
-/// Quantas faixas à frente preparamos: a primeira é baixada inteira, as outras só têm a URL resolvida.
+/// Quantas faixas à frente da atual preparamos (ver `preload_upcoming`).
 const LOOKAHEAD: usize = 3;
+/// Destas, quantas são baixadas inteiras para o disco (as outras só têm a URL resolvida).
+const PRELOAD_FULL: usize = 2;
 /// De uma lista que apareceu na tela, quantas faixas do topo preparamos antes do clique.
 const PREPARE_VISIBLE: usize = 4;
 
@@ -45,7 +48,11 @@ pub async fn library_playlists(state: State<'_, AppState>) -> Result<Vec<SourceR
 pub async fn playlist_tracks(state: State<'_, AppState>, source: Source, playlist_id: String) -> Result<Vec<Track>> {
     // Playlist de outra pessoa, importada por link: no Spotify ela tem um caminho próprio.
     if source == Source::Spotify && state.imports.contains(source, &playlist_id).await {
-        return state.providers.spotify.shared_playlist_tracks(&playlist_id).await;
+        return match state.providers.spotify.shared_playlist_tracks(&playlist_id).await {
+            // Sem conta do Spotify: lê a página pública da playlist (as faixas tocam pelo YouTube).
+            Err(Error::NotConnected(_)) => imports::spotify_embed_tracks(&state.http, &playlist_id).await,
+            other => other,
+        };
     }
     state.providers.get(source).playlist_tracks(&playlist_id).await
 }
@@ -104,7 +111,8 @@ pub async fn favorites_list(state: State<'_, AppState>) -> Result<Vec<Track>> {
 pub async fn set_favorite(state: State<'_, AppState>, track: Track, liked: bool) -> Result<FavoriteResult> {
     let favorites = state.favorites.set(&track, liked);
     let remote_error = match state.providers.get(track.source).set_liked(&track, liked).await {
-        Ok(()) => None,
+        // Sem conta daquele serviço, a curtida fica só no GlobalMusic, e isso não é um erro.
+        Ok(()) | Err(Error::NotConnected(_)) => None,
         Err(e) => {
             log::warn!("curtida no {} falhou para \"{}\": {e}", track.source.label(), track.title);
             Some(format!("{}: {e}", track.source.label()))
@@ -186,6 +194,9 @@ pub async fn player_enqueue(app: AppHandle, state: State<'_, AppState>, track: T
     let snapshot = update_player(&app, &state, |p| started = p.enqueue(track)).await;
     if started {
         start_current(&app, &snapshot).await;
+    } else {
+        // Entrou na fila: se estiver entre as próximas, já começa a carregar.
+        preload_upcoming(&app).await;
     }
     Ok(snapshot)
 }
@@ -267,6 +278,32 @@ pub async fn remove_imported_playlist(state: State<'_, AppState>, source: Source
     Ok(state.imports.remove(source, &id).await)
 }
 
+/// Playlists criadas no GlobalMusic (faixas de qualquer fonte, sem precisar de conta).
+#[tauri::command]
+pub async fn local_playlists(state: State<'_, AppState>) -> Result<Vec<LocalPlaylist>> {
+    Ok(state.local_playlists.list())
+}
+
+#[tauri::command]
+pub async fn create_local_playlist(state: State<'_, AppState>, name: String, tracks: Vec<Track>) -> Result<Vec<LocalPlaylist>> {
+    state.local_playlists.create(&name, tracks)
+}
+
+#[tauri::command]
+pub async fn add_to_local_playlist(state: State<'_, AppState>, id: String, tracks: Vec<Track>) -> Result<Vec<LocalPlaylist>> {
+    state.local_playlists.add(&id, tracks)
+}
+
+#[tauri::command]
+pub async fn remove_from_local_playlist(state: State<'_, AppState>, id: String, index: usize) -> Result<Vec<LocalPlaylist>> {
+    state.local_playlists.remove_track(&id, index)
+}
+
+#[tauri::command]
+pub async fn delete_local_playlist(state: State<'_, AppState>, id: String) -> Result<Vec<LocalPlaylist>> {
+    state.local_playlists.delete(&id)
+}
+
 /// Letra da faixa (LRCLIB): sincronizada quando existir, senão corrida.
 #[tauri::command]
 pub async fn lyrics(state: State<'_, AppState>, track: Track) -> Result<Option<Lyrics>> {
@@ -333,10 +370,9 @@ pub async fn on_audio_event(app: &AppHandle, event: AudioEvent) {
         AudioEvent::NativeUnavailable(_) => {
             let snapshot = state.player.lock().await.snapshot();
             if state.audio.note_native_refused() {
-                log::warn!("o Spotify recusou o librespot de novo; nesta sessão as faixas do Spotify vão direto pelo YouTube");
+                log::warn!("o Spotify recusou o librespot; pelas próximas 24 h as faixas do Spotify vão direto pelo YouTube");
+                // As próximas da fila passam a ir pelo YouTube: são pré-carregadas assim que esta tocar.
                 state.player.lock().await.set_spotify_premium(false);
-                // A próxima da fila foi pré-carregada pelo librespot: prepara de novo, pelo YouTube.
-                preload_upcoming(app).await;
             }
             if let Some(track) = snapshot.current {
                 log::info!("[{generation}] Spotify recusou \"{}\"; tentando pelo YouTube", track.title);
@@ -452,34 +488,27 @@ fn skip_offtopic(app: &AppHandle, generation: u64, track: Track, route: Playback
     });
 }
 
-/// Prepara as próximas faixas em segundo plano: a seguinte é baixada inteira (toca na hora
-/// quando a atual acabar) e as outras têm a URL resolvida (pular até elas não espera o yt-dlp).
-/// Uma de cada vez, para não disputar CPU e rede com a faixa que está tocando; e tudo é
-/// abandonado se a pessoa trocar de faixa (a fila "à frente" mudou).
+/// Prepara as próximas faixas em segundo plano, todas ao mesmo tempo: as `PRELOAD_FULL`
+/// primeiras são baixadas inteiras (tocam na hora) e as outras têm a URL resolvida (pular até
+/// elas não espera o yt-dlp). O yt-dlp em segundo plano tem vagas limitadas (`BACKGROUND_YTDLP`).
+///
+/// **Não é cancelado quando a pessoa pula de faixa.** Antes era, e pular para a faixa que estava
+/// sendo preparada *matava* o yt-dlp dela no meio: o play começava tudo de novo (~5 s). Agora o
+/// play aproveita o mesmo yt-dlp, e a pré-carga repetida da mesma faixa não baixa duas vezes.
 async fn preload_upcoming(app: &AppHandle) {
     let state = app.state::<AppState>();
     let upcoming = state.player.lock().await.upcoming(LOOKAHEAD);
-    if upcoming.is_empty() {
-        return;
-    }
-    let generation = state.audio.current_generation();
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let audio = &app.state::<AppState>().audio;
-        let work = async {
-            let mut upcoming = upcoming.into_iter();
-            if let Some((track, route)) = upcoming.next() {
+    for (i, (track, route)) in upcoming.into_iter().enumerate() {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let audio = &app.state::<AppState>().audio;
+            if i < PRELOAD_FULL {
                 audio.preload(track, route).await;
-            }
-            for (track, route) in upcoming {
+            } else {
                 audio.warm(&track, route).await;
             }
-        };
-        tokio::select! {
-            () = work => {}
-            () = audio.superseded(generation) => {}
-        }
-    });
+        });
+    }
 }
 
 /// Aplica a mudança e avisa todas as janelas (atalhos de mídia do SO também passarão por aqui).
@@ -487,9 +516,11 @@ async fn update_player(app: &AppHandle, state: &AppState, change: impl FnOnce(&m
     let snapshot = {
         let mut player = state.player.lock().await;
         change(&mut player);
+        player.touch();
         player.snapshot()
     };
     state.presence.show(&snapshot);
+    crate::media_keys::show(app, &snapshot);
     let _ = app.emit(PLAYER_EVENT, &snapshot);
     snapshot
 }

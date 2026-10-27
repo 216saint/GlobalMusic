@@ -1,16 +1,26 @@
 // Estado global da UI (Svelte 5 runes). Uma instância, importada onde precisar.
 
 import { api, errorMessage } from "./api";
-import type { AccountStatus, Lyrics, PlayerSnapshot, Playlist, QueueSlot, Source, SourceResults, Track } from "./types";
+import type {
+  AccountStatus,
+  LocalPlaylist,
+  Lyrics,
+  PlayerSnapshot,
+  Playlist,
+  QueueSlot,
+  Source,
+  SourceResults,
+  Track,
+} from "./types";
 import { SOURCE_LABEL } from "./types";
 
 export type Tab = "search" | "library";
 export type Filter = Source | "all";
 export type Panel = "now" | "queue" | "friends" | "profile";
 
-/** Lista aberta na biblioteca: uma playlist de um serviço ou as curtidas do GlobalMusic. */
+/** Lista aberta na biblioteca: uma playlist de um serviço, uma criada no GlobalMusic ou as curtidas. */
 export interface OpenedPlaylist {
-  kind: "playlist" | "favorites";
+  kind: "playlist" | "favorites" | "local";
   id: string;
   title: string;
   /** `null` = lista do próprio GlobalMusic (várias fontes). */
@@ -57,6 +67,7 @@ const EMPTY_PLAYER: PlayerSnapshot = {
   loading: false,
   positionMs: 0,
   volume: 0.8,
+  version: 0,
 };
 const TICK_MS = 500;
 const TOAST_MS = 5000;
@@ -70,13 +81,38 @@ function interleave<T>(groups: T[][]): T[] {
   return out;
 }
 
+/** Sugestões da janela "Nova playlist": o que tocou por último e a última busca (ficam neste computador). */
+const RECENT_KEY = "globalmusic.recent";
+const LAST_SEARCH_KEY = "globalmusic.lastSearch";
+const MAX_RECENT = 30;
+const MAX_LAST_SEARCH = 20;
+
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Sem armazenamento (ex.: modo privado no navegador): as sugestões só valem nesta sessão.
+  }
+}
+
 const sameTrack = (a: Track, b: Track) => a.source === b.source && a.id === b.id;
 const trackKey = (t: Track) => `${t.source}:${t.id}`;
 /** Quantas faixas do topo de uma lista mandamos preparar (o backend também limita). */
 const PREPARE_TOP = 4;
 
 class AppStore {
-  tab = $state<Tab>("search");
+  tab = $state<Tab>("library");
+  /** Painel da esquerda (busca/biblioteca) visível; escondido, sobra só o player. */
+  sidebarOpen = $state(true);
   filter = $state<Filter>("all");
   panel = $state<Panel>("now");
 
@@ -87,6 +123,14 @@ class AppStore {
   /** Playlists importadas por link (ficam na biblioteca junto com as da pessoa). */
   imported = $state<Playlist[]>([]);
   importing = $state(false);
+  /** Playlists criadas no GlobalMusic. */
+  locals = $state<LocalPlaylist[]>([]);
+  /** Janela "Nova playlist": `null` fechada; aberta, as músicas que já entram marcadas. */
+  creating = $state<Track[] | null>(null);
+  /** Tocadas por último (a mais recente primeiro), para sugerir numa playlist nova. */
+  recent = $state<Track[]>(readStored(RECENT_KEY, []));
+  /** Resultados da última busca (sobrevivem a fechar o app), também sugeridos. */
+  lastSearch = $state<{ query: string; tracks: Track[] }>(readStored(LAST_SEARCH_KEY, { query: "", tracks: [] }));
   accounts = $state<AccountStatus[]>([]);
   busySource = $state<Source | null>(null);
   notice = $state<string | null>(null);
@@ -184,15 +228,17 @@ class AppStore {
       clearTimeout(this.#errorTimer);
       this.#errorTimer = setTimeout(() => (this.playbackError = null), 8000);
     });
-    const [player, favorites, imported] = await Promise.all([
+    const [player, favorites, imported, locals] = await Promise.all([
       api.playerState(),
       api.favorites(),
       api.importedPlaylists(),
+      api.localPlaylists(),
       this.loadAccounts(),
       this.loadLibrary(),
     ]);
     this.favorites = favorites;
     this.imported = imported;
+    this.locals = locals;
     this.#applyPlayer(player);
     setInterval(() => this.#tick(), TICK_MS);
   }
@@ -226,6 +272,11 @@ class AppStore {
 
   setTab(tab: Tab) {
     this.tab = tab;
+    this.sidebarOpen = true;
+  }
+
+  toggleSidebar() {
+    this.sidebarOpen = !this.sidebarOpen;
   }
 
   async search(query: string) {
@@ -242,6 +293,11 @@ class AppStore {
       if (seq === this.#searchSeq) {
         this.results = results;
         this.prepareVisible(this.tracks);
+        const all = interleave(results.map((r) => r.items));
+        if (all.length) {
+          this.lastSearch = { query, tracks: all.slice(0, MAX_LAST_SEARCH) };
+          store(LAST_SEARCH_KEY, $state.snapshot(this.lastSearch));
+        }
       }
     } catch (e) {
       if (seq === this.#searchSeq) this.notice = errorMessage(e);
@@ -316,6 +372,70 @@ class AppStore {
     } catch (e) {
       this.notify(errorMessage(e));
     }
+  }
+
+  /** Cria uma playlist no GlobalMusic e já a abre. */
+  async createPlaylist(name: string, tracks: Track[]) {
+    try {
+      this.locals = await api.createLocalPlaylist(name, $state.snapshot(tracks));
+      this.creating = null;
+      this.setTab("library");
+      this.openLocal(this.locals[0]);
+      this.notify(`Playlist "${this.locals[0].name}" criada`);
+      return true;
+    } catch (e) {
+      this.notify(errorMessage(e));
+      return false;
+    }
+  }
+
+  async addToPlaylist(playlist: LocalPlaylist, tracks: Track[]) {
+    try {
+      this.locals = await api.addToLocalPlaylist(playlist.id, $state.snapshot(tracks));
+      this.#refreshOpenedLocal();
+      this.notify(tracks.length === 1 ? `"${tracks[0].title}" entrou em "${playlist.name}"` : `Músicas adicionadas a "${playlist.name}"`);
+    } catch (e) {
+      this.notify(errorMessage(e));
+    }
+  }
+
+  async removeFromPlaylist(id: string, index: number) {
+    this.locals = await api.removeFromLocalPlaylist(id, index);
+    this.#refreshOpenedLocal();
+  }
+
+  async deletePlaylist(playlist: LocalPlaylist) {
+    this.locals = await api.deleteLocalPlaylist(playlist.id);
+    if (this.opened?.kind === "local" && this.opened.id === playlist.id) this.closePlaylist();
+    this.notify(`Playlist "${playlist.name}" apagada`);
+  }
+
+  openLocal(playlist: LocalPlaylist) {
+    this.#playlistSeq++;
+    this.opened = {
+      kind: "local",
+      id: playlist.id,
+      title: playlist.name,
+      source: null,
+      artworkUrl: null,
+      tracks: playlist.tracks,
+      loading: false,
+      error: null,
+    };
+    this.prepareVisible(playlist.tracks);
+  }
+
+  #refreshOpenedLocal() {
+    const opened = this.opened;
+    if (opened?.kind !== "local") return;
+    const fresh = this.locals.find((p) => p.id === opened.id);
+    if (fresh) this.opened = { ...opened, tracks: fresh.tracks };
+  }
+
+  #rememberPlayed(track: Track) {
+    if (this.recent[0] && sameTrack(this.recent[0], track)) return;
+    this.recent = [track, ...this.recent.filter((t) => !sameTrack(t, track))].slice(0, MAX_RECENT);
+    store(RECENT_KEY, $state.snapshot(this.recent));
   }
 
   /** Abre a playlist na biblioteca (lista as faixas); tocar é uma escolha separada. */
@@ -420,8 +540,11 @@ class AppStore {
 
   // A posição oficial vem do backend; entre um snapshot e outro a UI avança sozinha (#tick).
   #applyPlayer(next: PlayerSnapshot) {
+    // Resposta de um comando que chegou depois do evento de uma mudança mais nova: já está velha.
+    if (next.version < this.player.version) return;
     this.positionMs = next.positionMs;
     this.player = next;
+    if (next.current && next.playing && !next.loading) this.#rememberPlayed(next.current);
     void this.loadLyrics();
   }
 

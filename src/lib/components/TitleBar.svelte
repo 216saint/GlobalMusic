@@ -46,9 +46,9 @@
       {#each TABS as { tab, label, icon: Icon }}
         <button
           class="icon-btn"
-          class:on={app.tab === tab}
+          class:on={app.sidebarOpen && app.tab === tab}
           role="tab"
-          aria-selected={app.tab === tab}
+          aria-selected={app.sidebarOpen && app.tab === tab}
           aria-label={label}
           title={label}
           onclick={() => app.setTab(tab)}

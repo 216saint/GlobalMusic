@@ -6,8 +6,10 @@
   import Copy from "@lucide/svelte/icons/copy";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import { api, errorMessage } from "$lib/api";
   import { app } from "$lib/app.svelte";
+  import { updates } from "$lib/updates.svelte";
   import type { AccountStatus } from "$lib/types";
   import { SOURCE_LABEL } from "$lib/types";
   import SocialAccount from "./SocialAccount.svelte";
@@ -36,6 +38,11 @@
   let clientIdMessage = $state<string | null>(null);
 
   let version = $state<string | null>(null);
+
+  async function checkUpdates() {
+    const answer = await updates.check(true);
+    if (answer) app.notify(answer);
+  }
 
   onMount(async () => {
     savedClientId = await api.spotifyCustomClientId();
@@ -166,9 +173,13 @@
     </div>
   </div>
 
-  {#if version}
-    <p class="version tabular">GlobalMusic {version}</p>
-  {/if}
+  <footer class="about">
+    {#if version}<span class="version tabular">GlobalMusic {version}</span>{/if}
+    <button class="check" onclick={checkUpdates} disabled={updates.checking || updates.installing}>
+      <RefreshCw size={13} class={updates.checking ? "spin" : ""} />
+      {updates.checking ? "Procurando…" : "Buscar atualizações"}
+    </button>
+  </footer>
 </section>
 
 <style>
@@ -395,9 +406,46 @@
     color: var(--ink-2);
   }
 
+  .about {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 28px;
+  }
+
   .version {
-    margin: 28px 0 0;
     font-size: 12px;
     color: var(--ink-3);
+  }
+
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--edge);
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+
+  .check:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: var(--violet);
+  }
+
+  .check:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .check :global(.spin) {
+    animation: spin 0.9s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      rotate: 360deg;
+    }
   }
 </style>

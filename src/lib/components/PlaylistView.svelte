@@ -3,10 +3,12 @@
 <script lang="ts">
   import Heart from "@lucide/svelte/icons/heart";
   import Play from "@lucide/svelte/icons/play";
+  import X from "@lucide/svelte/icons/x";
   import { app, type OpenedPlaylist } from "$lib/app.svelte";
   import { SOURCE_LABEL, isLikedCollection } from "$lib/types";
   import Artwork from "./Artwork.svelte";
   import LikedCover from "./LikedCover.svelte";
+  import LocalCover from "./LocalCover.svelte";
   import Bars from "./Bars.svelte";
   import SourceIcon from "./SourceIcon.svelte";
   import TrackRow from "./TrackRow.svelte";
@@ -20,6 +22,8 @@
   <header>
     {#if opened.kind === "favorites"}
       <span class="fav-art"><Heart size={30} fill="currentColor" strokeWidth={0} /></span>
+    {:else if opened.kind === "local"}
+      <LocalCover tracks={opened.tracks} size="72px" />
     {:else if opened.source && isLikedCollection(opened)}
       <LikedCover source={opened.source} size="72px" />
     {:else}
@@ -31,10 +35,12 @@
         {#if opened.source}
           <SourceIcon source={opened.source} size={12} />
           {SOURCE_LABEL[opened.source]}
+        {:else if opened.kind === "local"}
+          Playlist do GlobalMusic
         {:else}
           Todas as fontes
         {/if}
-        {#if !opened.loading && !opened.error} · {opened.tracks.length} músicas{/if}
+        {#if !opened.loading && !opened.error} · {opened.tracks.length} {opened.tracks.length === 1 ? "música" : "músicas"}{/if}
       </p>
     </div>
     {#if opened.tracks.length}
@@ -50,14 +56,27 @@
     <p class="error" role="alert">{opened.error}</p>
   {:else if !opened.tracks.length}
     <div class="state">
-      <p>{opened.kind === "favorites" ? "Clique com o botão direito numa música e escolha Curtir." : "Esta playlist está vazia."}</p>
+      <p>
+        {#if opened.kind === "favorites"}
+          Clique com o botão direito numa música e escolha Curtir.
+        {:else if opened.kind === "local"}
+          Clique com o botão direito numa música e escolha "Adicionar à playlist".
+        {:else}
+          Esta playlist está vazia.
+        {/if}
+      </p>
     </div>
   {:else}
     <ul class="tracks">
       {#each opened.tracks as track, i (track.source + track.id + i)}
         {@const current = isCurrent(track.id, track.source)}
-        <li>
+        <li class:removable={opened.kind === "local"}>
           <TrackRow {track} {current} playing={current && app.player.playing} onplay={() => app.play(opened.tracks, i, opened.title)} />
+          {#if opened.kind === "local"}
+            <button class="remove" aria-label="Tirar {track.title} da playlist" title="Tirar da playlist" onclick={() => app.removeFromPlaylist(opened.id, i)}>
+              <X size={14} />
+            </button>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -126,6 +145,39 @@
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+
+  .removable {
+    position: relative;
+  }
+
+  /* Abre espaço à direita da linha para o botão de tirar. */
+  .removable > :global(.row) {
+    padding-right: 40px;
+  }
+
+  .remove {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    translate: 0 -50%;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    color: var(--ink-3);
+    opacity: 0;
+  }
+
+  .removable:hover .remove,
+  .remove:focus-visible {
+    opacity: 1;
+  }
+
+  .remove:hover {
+    background: var(--tint-2);
+    color: var(--ink);
   }
 
   .state {

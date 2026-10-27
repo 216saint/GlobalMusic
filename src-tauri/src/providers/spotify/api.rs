@@ -18,6 +18,12 @@ pub struct Page<T> {
     pub total: Option<u32>,
 }
 
+/// `GET /tracks?ids=…`: um item por id pedido (`null` para id desconhecido).
+#[derive(Debug, Deserialize)]
+pub struct SeveralTracks {
+    pub tracks: Vec<Option<SpTrack>>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SearchResponse {
     pub tracks: Page<SpTrack>,
@@ -70,6 +76,8 @@ pub struct SpPlaylist {
 
 #[derive(Debug, Deserialize)]
 pub struct Owner {
+    #[serde(default)]
+    pub id: String,
     pub display_name: Option<String>,
 }
 
@@ -109,6 +117,11 @@ impl SpTrack {
 }
 
 impl SpPlaylist {
+    /// Feita pelo próprio Spotify ("This Is", Daily Mix, Descobertas da Semana, editoriais).
+    pub fn by_spotify(&self) -> bool {
+        self.owner.as_ref().is_some_and(|o| o.id == SPOTIFY_OWNER)
+    }
+
     pub fn into_playlist(self) -> Playlist {
         Playlist {
             id: self.id,
@@ -121,9 +134,25 @@ impl SpPlaylist {
     }
 }
 
+/// Id do dono das playlists automáticas e editoriais.
+const SPOTIFY_OWNER: &str = "spotify";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_playlists_made_by_spotify() {
+        let playlist = |owner: &str| SpPlaylist {
+            id: "p".into(),
+            name: "x".into(),
+            owner: Some(Owner { id: owner.into(), display_name: None }),
+            images: None,
+            tracks: None,
+        };
+        assert!(playlist("spotify").by_spotify());
+        assert!(!playlist("216saint").by_spotify());
+    }
 
     #[test]
     fn maps_search_result_with_isrc_and_two_sized_cover() {

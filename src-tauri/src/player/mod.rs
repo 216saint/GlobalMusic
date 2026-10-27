@@ -36,6 +36,9 @@ pub struct Player {
     volume: f32,
     spotify_premium: bool,
     consecutive_failures: u32,
+    /// Sobe a cada mudança (ver `touch`). Vai no snapshot para a UI descartar um snapshot velho
+    /// que chegue depois de um mais novo.
+    version: u64,
 }
 
 impl Default for Player {
@@ -48,6 +51,7 @@ impl Default for Player {
             volume: 0.8,
             spotify_premium: false,
             consecutive_failures: 0,
+            version: 0,
         }
     }
 }
@@ -70,6 +74,10 @@ pub struct PlayerSnapshot {
     /// Posição no instante em que o snapshot foi tirado.
     pub position_ms: u64,
     pub volume: f32,
+    /// Ordem dos snapshots: a resposta de um comando pode chegar à UI **depois** do evento de uma
+    /// mudança posterior. Ex.: o "tocar" responde "carregando", mas a música veio do cache e o
+    /// evento "começou" chegou antes; sem isso, a resposta atrasada deixava a UI em "Carregando…".
+    pub version: u64,
 }
 
 impl PlayerSnapshot {
@@ -94,7 +102,13 @@ impl Player {
             loading: self.loading,
             position_ms: self.clock.position_ms(Instant::now(), duration),
             volume: self.volume,
+            version: self.version,
         }
+    }
+
+    /// Marca uma mudança de estado (chamado por `commands::update_player`).
+    pub fn touch(&mut self) {
+        self.version += 1;
     }
 
     pub fn set_spotify_premium(&mut self, premium: bool) {

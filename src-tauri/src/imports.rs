@@ -12,7 +12,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::error::{Error, Result};
-use crate::models::{Artwork, Playlist, Source};
+use crate::models::{Artwork, Playlist, Source, Track};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -85,6 +85,70 @@ pub async fn describe(http: &reqwest::Client, source: Source, id: &str) -> Resul
     })
 }
 
+/// Faixas de uma playlist pública do Spotify **sem conta conectada**: lidas da página do player
+/// incorporável (`open.spotify.com/embed/...`), a mesma que blogs usam para mostrar uma playlist.
+/// Ela traz título, artistas e duração (sem capa por faixa), até ~100 faixas. Como as faixas do
+/// Spotify tocam pelo YouTube, isso basta para ouvir a playlist.
+pub async fn spotify_embed_tracks(http: &reqwest::Client, id: &str) -> Result<Vec<Track>> {
+    let url = format!("https://open.spotify.com/embed/playlist/{id}");
+    let response = http.get(&url).timeout(TIMEOUT).send().await?;
+    if !response.status().is_success() {
+        return Err(Error::Other("não achei essa playlist no Spotify. Ela é pública?".into()));
+    }
+    let html = response.text().await?;
+    let tracks = embed_tracks(&html);
+    if tracks.is_empty() {
+        return Err(Error::Other("conecte o Spotify no Perfil para abrir esta playlist".into()));
+    }
+    Ok(tracks)
+}
+
+#[derive(Deserialize)]
+struct EmbedTrack {
+    uri: String,
+    title: String,
+    #[serde(default)]
+    subtitle: String,
+    #[serde(default)]
+    duration: u64,
+    #[serde(default = "playable")]
+    #[serde(rename = "isPlayable")]
+    is_playable: bool,
+}
+
+fn playable() -> bool {
+    true
+}
+
+/// A lista vem no JSON do Next.js da página (`__NEXT_DATA__` → … → `entity.trackList`).
+fn embed_tracks(html: &str) -> Vec<Track> {
+    const START: &str = r#"<script id="__NEXT_DATA__" type="application/json">"#;
+    let Some(json) = html.split_once(START).and_then(|(_, rest)| rest.split_once("</script>")).map(|(json, _)| json)
+    else {
+        return Vec::new();
+    };
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
+    let list = data.pointer("/props/pageProps/state/data/entity/trackList").cloned().unwrap_or_default();
+    let items: Vec<EmbedTrack> = serde_json::from_value(list).unwrap_or_default();
+    items
+        .into_iter()
+        .filter(|t| t.is_playable)
+        .filter_map(|t| {
+            let id = t.uri.strip_prefix("spotify:track:")?.to_owned();
+            Some(Track {
+                id,
+                source: Source::Spotify,
+                title: t.title,
+                artists: t.subtitle.split(", ").map(str::to_owned).filter(|a| !a.is_empty()).collect(),
+                album: None,
+                duration_ms: t.duration,
+                artwork: None,
+                isrc: None,
+            })
+        })
+        .collect()
+}
+
 /// As playlists importadas, guardadas em disco.
 pub struct Imports {
     file: Option<PathBuf>,
@@ -127,6 +191,10 @@ impl Imports {
 
     fn save(&self, list: &[Playlist]) {
         if let (Some(path), Ok(json)) = (&self.file, serde_json::to_vec(list)) {
+            // Numa instalação nova a pasta de dados ainda não existe.
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
             if let Err(e) = std::fs::write(path, json) {
                 log::info!("não gravei as playlists importadas: {e}");
             }
@@ -157,6 +225,20 @@ mod tests {
             parse_link("https://soundcloud.com/artista/sets/minha-lista?si=1&utm_source=x").unwrap(),
             Link::Soundcloud("https://soundcloud.com/artista/sets/minha-lista".into())
         );
+    }
+
+    #[test]
+    fn reads_tracks_from_the_spotify_embed_page() {
+        let html = r#"<html><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":{"trackList":[
+            {"uri":"spotify:track:abc","title":"Endpoints","subtitle":"Glenn Horiuchi, Glenn Horiuchi Trio","duration":730066,"isPlayable":true},
+            {"uri":"spotify:track:off","title":"Bloqueada","subtitle":"X","duration":1,"isPlayable":false}
+        ]}}}}}}</script></html>"#;
+        let tracks = embed_tracks(html);
+        assert_eq!(tracks.len(), 1, "a indisponível fica de fora");
+        assert_eq!(tracks[0].id, "abc");
+        assert_eq!(tracks[0].artists, ["Glenn Horiuchi", "Glenn Horiuchi Trio"]);
+        assert_eq!(tracks[0].duration_ms, 730_066);
+        assert!(embed_tracks("<html>sem dados</html>").is_empty());
     }
 
     #[test]

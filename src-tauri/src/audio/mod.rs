@@ -20,8 +20,8 @@
 //! **Cache em disco** (`cache.rs`): toda música baixada por inteiro fica guardada (até 300 MB);
 //! na próxima vez ela toca na hora, sem rede. Leve: nada fica na RAM.
 //!
-//! **Pré-carregamento:** enquanto uma faixa toca, a próxima da fila já é
-//! baixada para o cache em disco (`preload`), e as duas seguintes têm a URL resolvida
+//! **Pré-carregamento:** enquanto uma faixa toca, as duas próximas da fila já são
+//! baixadas para o cache em disco (`preload`), e a terceira tem a URL resolvida
 //! (`warm`). Pular para qualquer uma delas não espera o yt-dlp.
 
 mod cache;
@@ -32,6 +32,7 @@ mod output;
 mod spotify_native;
 mod ytdlp;
 
+use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -78,8 +79,9 @@ pub enum PrepareReason {
     Hover,
 }
 
-/// Recusas do librespot até desistir dele (ver `Audio::note_native_refused`).
-const NATIVE_REFUSALS_TO_GIVE_UP: u32 = 2;
+/// Recusas do librespot até desistir dele (ver `Audio::note_native_refused`). Uma basta: a
+/// recusa da chave de áudio vale para todas as faixas, e cada tentativa custa ~3 s.
+const NATIVE_REFUSALS_TO_GIVE_UP: u32 = 1;
 /// Depois de desistir, por quanto tempo nem tentamos (vale entre aberturas do app).
 const NATIVE_OFF_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -140,6 +142,8 @@ pub struct Audio {
     native_off_marker: Option<PathBuf>,
     /// Vagas para yt-dlp em segundo plano (preparar antes do clique, próximas da fila).
     background_slots: Semaphore,
+    /// Pré-cargas em andamento (pela chave do cache): pedir a mesma de novo não baixa duas vezes.
+    preloading: std::sync::Mutex<HashSet<String>>,
     /// A "vez" de cada motivo de preparação (ver `PrepareReason`).
     visible_turn: watch::Sender<u64>,
     hover_turn: watch::Sender<u64>,
@@ -180,6 +184,7 @@ impl Audio {
             }),
             native_off_marker,
             background_slots: Semaphore::new(BACKGROUND_YTDLP),
+            preloading: std::sync::Mutex::new(HashSet::new()),
             visible_turn: watch::Sender::new(0),
             hover_turn: watch::Sender::new(0),
         }
@@ -318,6 +323,7 @@ impl Audio {
         if self.disk.contains(&key) {
             return;
         }
+        let Some(_preloading) = Preloading::start(&self.preloading, &key) else { return };
         match self.fetch_audio(&track, route).await {
             Ok((bytes, hint)) => {
                 log::info!("pré-carregada \"{}\" ({} KB, no disco)", track.title, bytes.len() / 1024);
@@ -484,13 +490,13 @@ impl Audio {
 
     /// O Spotify recusou tocar pelo librespot. Em out/2026 ele passou a negar a chave de
     /// decifragem do áudio (`error audio key 0 1`) a clientes não oficiais: cada tentativa gastava
-    /// ~3 s antes de cair no YouTube. Depois de algumas recusas, paramos de tentar nesta sessão e
+    /// ~3 s antes de cair no YouTube. Depois da primeira recusa, paramos de tentar e
     /// as faixas do Spotify vão direto pelo YouTube, onde ganham pré-carga e início rápido.
     /// Devolve `true` quando é hora de desistir.
     pub fn note_native_refused(&self) -> bool {
         let give_up = self.native_refusals.fetch_add(1, Ordering::SeqCst) + 1 == NATIVE_REFUSALS_TO_GIVE_UP;
         if give_up {
-            // Lembra por 24 h: abrir o app de novo não gasta mais duas tentativas de ~3 s.
+            // Lembra por 24 h: abrir o app de novo não gasta outra tentativa de ~3 s.
             if let Some(marker) = &self.native_off_marker {
                 let _ = std::fs::write(marker, b"");
             }
@@ -636,6 +642,28 @@ fn match_key(track: &Track) -> String {
 }
 
 /// Identifica "este áudio" no cache de pré-carregamento.
+/// Marca uma pré-carga como "em andamento" enquanto vive; ao sair (mesmo com erro), desmarca.
+struct Preloading<'a> {
+    set: &'a std::sync::Mutex<HashSet<String>>,
+    key: String,
+}
+
+impl<'a> Preloading<'a> {
+    /// `None` se a mesma pré-carga já está em andamento.
+    fn start(set: &'a std::sync::Mutex<HashSet<String>>, key: &str) -> Option<Self> {
+        let fresh = set.lock().map(|mut s| s.insert(key.to_owned())).unwrap_or(false);
+        fresh.then(|| Self { set, key: key.to_owned() })
+    }
+}
+
+impl Drop for Preloading<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.set.lock() {
+            set.remove(&self.key);
+        }
+    }
+}
+
 fn cache_key(track: &Track, route: PlaybackRoute) -> String {
     format!("{route:?}:{}:{}", track.source.key(), track.id)
 }
@@ -656,4 +684,20 @@ where
     })
     .await
     .map_err(|e| Error::Other(e.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_same_preload_does_not_run_twice_at_once() {
+        let set = std::sync::Mutex::new(HashSet::new());
+        let first = Preloading::start(&set, "faixa");
+        assert!(first.is_some());
+        assert!(Preloading::start(&set, "faixa").is_none(), "a segunda espera a primeira");
+        assert!(Preloading::start(&set, "outra").is_some());
+        drop(first);
+        assert!(Preloading::start(&set, "faixa").is_some(), "terminada, pode pré-carregar de novo");
+    }
 }

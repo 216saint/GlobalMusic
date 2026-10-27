@@ -36,6 +36,13 @@ export interface Playlist {
   artwork: Artwork | null;
 }
 
+/** Playlist criada no GlobalMusic: faixas de qualquer fonte, sem precisar de conta. */
+export interface LocalPlaylist {
+  id: string;
+  name: string;
+  tracks: Track[];
+}
+
 export interface SourceResults<T> {
   source: Source;
   items: T[];
@@ -94,6 +101,8 @@ export interface PlayerSnapshot {
   /** Posição no instante do snapshot; a UI avança localmente a partir daqui. */
   positionMs: number;
   volume: number;
+  /** Ordem dos snapshots: um mais velho que o atual é descartado (chegou atrasado). */
+  version: number;
 }
 
 // Letras (LRCLIB) e versões no YouTube: espelho de `lyrics.rs` e `commands.rs`.

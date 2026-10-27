@@ -57,6 +57,12 @@ body {
   user-select: none;
 }
 
+/* Maximizada ou em tela cheia (ver App.svelte): sem cantos arredondados, que deixariam ver o que
+   está atrás da janela nas quinas da tela. */
+html[data-filled="true"] {
+  --r-window: 0px;
+}
+
 /* Linux e navegador: sem vidro nativo, a própria janela tem chassi. */
 html[data-glass="drawn"] body {
   background: var(--graphite);

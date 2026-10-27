@@ -3,11 +3,13 @@
   import Search from "@lucide/svelte/icons/search";
   import Heart from "@lucide/svelte/icons/heart";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-  import Link2 from "@lucide/svelte/icons/link-2";
+  import Plus from "@lucide/svelte/icons/plus";
+  import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import { app } from "$lib/app.svelte";
   import type { SourceResults } from "$lib/types";
   import { SOURCE_LABEL } from "$lib/types";
   import Bars from "./Bars.svelte";
+  import LocalTile from "./LocalTile.svelte";
   import PlaylistTile from "./PlaylistTile.svelte";
   import PlaylistView from "./PlaylistView.svelte";
   import SourceIcon from "./SourceIcon.svelte";
@@ -26,12 +28,7 @@
 
   const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-  let importLink = $state("");
-  async function importFromLink(event: SubmitEvent) {
-    event.preventDefault();
-    if (await app.importPlaylist(importLink)) importLink = "";
-  }
-
+  const anyAccount = $derived(app.accounts.some((a) => a.connected));
 </script>
 
 <!-- Abas (Buscar/Biblioteca) e filtros de fonte ficam na barra de título (TitleBar.svelte). -->
@@ -45,6 +42,9 @@
     {/if}
     {app.tab === "search" ? "Buscar" : "Biblioteca"}
     {#if app.filter !== "all"}<span class="scope"><SourceIcon source={app.filter} size={12} /> {SOURCE_LABEL[app.filter]}</span>{/if}
+    <button class="hide" aria-label="Esconder o painel" title="Esconder o painel (fica só o player)" onclick={() => app.toggleSidebar()}>
+      <PanelLeftClose size={17} strokeWidth={1.7} />
+    </button>
   </h2>
 
   {#if app.tab === "search"}
@@ -69,23 +69,6 @@
       </p>
     {/each}
 
-    {#if app.tab === "library" && !app.opened}
-      <!-- Importar uma playlist de qualquer serviço pelo link (sem precisar ser sua). -->
-      <form class="import" onsubmit={importFromLink}>
-        <Link2 size={15} />
-        <label class="sr-only" for="import-link">Link de uma playlist</label>
-        <input
-          id="import-link"
-          placeholder="Colar link de playlist (Spotify, YouTube Music, SoundCloud)"
-          bind:value={importLink}
-          spellcheck="false"
-        />
-        <button type="submit" disabled={!importLink.trim() || app.importing}>
-          {app.importing ? "Importando…" : "Importar"}
-        </button>
-      </form>
-    {/if}
-
     {#if app.tab === "search"}
       {#if app.tracks.length}
         <ul class="tracks">
@@ -107,7 +90,7 @@
       {/if}
     {:else if app.opened}
       <PlaylistView opened={app.opened} />
-    {:else if app.playlistItems.length || app.favorites.length}
+    {:else}
       {#if app.filter === "all"}
         <button class="favorites" onclick={() => app.openFavorites()}>
           <span class="fav-icon"><Heart size={18} fill="currentColor" strokeWidth={0} /></span>
@@ -118,6 +101,17 @@
         </button>
       {/if}
       <div class="grid">
+        <!-- Criar uma playlist no GlobalMusic ou importar uma por link. -->
+        <button class="new" onclick={() => (app.creating = [])} title="Criar ou importar uma playlist">
+          <span class="new-cover"><span class="plus"><Plus size={30} strokeWidth={2.2} /></span></span>
+          <span class="name">Nova playlist</span>
+          <span class="meta">Criar ou importar</span>
+        </button>
+        {#if app.filter === "all"}
+          {#each app.locals as playlist (playlist.id)}
+            <LocalTile {playlist} />
+          {/each}
+        {/if}
         {#each app.playlistItems as playlist (playlist.source + playlist.id)}
           <PlaylistTile
             {playlist}
@@ -126,12 +120,9 @@
           />
         {/each}
       </div>
-    {:else}
-      <div class="empty">
-        <Bars size={96} />
-        <p class="lead">Sua biblioteca aparece aqui.</p>
-        <p>Conecte suas contas para juntar as playlists de todas as fontes.</p>
-      </div>
+      {#if !anyAccount}
+        <p class="tip">Conecte suas contas no Perfil para ver aqui as suas playlists do Spotify, YouTube Music e SoundCloud.</p>
+      {/if}
     {/if}
   </div>
 
@@ -166,45 +157,77 @@
     font-weight: 650;
   }
 
-  .import {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 4px 6px 12px;
-    padding: 0 6px 0 12px;
-    border-radius: 12px;
-    border: 1px solid var(--edge);
-    background: var(--tint-1);
+  .hide {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    margin-left: auto;
+    border-radius: 9px;
     color: var(--ink-3);
   }
 
-  .import:focus-within {
-    border-color: var(--violet);
-  }
-
-  .import input {
-    flex: 1;
-    min-width: 0;
-    padding: 9px 0;
-    border: none;
-    background: none;
-    outline: none;
+  .hide:hover {
+    background: var(--tint-2);
     color: var(--ink);
-    font-size: 13px;
   }
 
-  .import button {
-    padding: 5px 10px;
-    border-radius: 8px;
-    font-size: 12.5px;
-    font-weight: 600;
-    background: var(--violet);
+  /* Card "Nova playlist": o mesmo tamanho dos outros, com o "+" no violeta do tema. */
+  .new {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border-radius: 16px;
+    text-align: left;
+    min-width: 0;
+  }
+
+  .new:hover {
+    background: var(--tint-1);
+  }
+
+  .new-cover {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1;
+    margin-bottom: 8px;
+    border-radius: 14px;
+    border: 1.5px dashed rgba(154, 143, 255, 0.55);
+    background: radial-gradient(circle at 50% 40%, rgba(123, 108, 255, 0.28), rgba(75, 63, 214, 0.08) 70%);
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .new:hover .new-cover {
+    border-color: var(--violet-bright);
+    background: radial-gradient(circle at 50% 40%, rgba(123, 108, 255, 0.42), rgba(75, 63, 214, 0.14) 70%);
+  }
+
+  .plus {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
     color: #fff;
+    background: linear-gradient(135deg, var(--violet-deep), var(--violet-bright));
+    box-shadow: 0 10px 26px -10px rgba(123, 108, 255, 0.9);
   }
 
-  .import button:disabled {
-    opacity: 0.45;
-    cursor: default;
+  .new .name {
+    font-weight: 600;
+  }
+
+  .new .meta {
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  .tip {
+    margin: 10px 14px 4px;
+    font-size: 12.5px;
+    color: var(--ink-3);
   }
 
   .back {

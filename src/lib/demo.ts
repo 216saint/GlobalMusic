@@ -5,6 +5,7 @@ import type { Backend } from "./api";
 import type {
   AccountStatus,
   FriendList,
+  LocalPlaylist,
   Me,
   PlayerSnapshot,
   Playlist,
@@ -108,6 +109,7 @@ let player: PlayerSnapshot = {
   loading: false,
   positionMs: 0,
   volume: 0.8,
+  version: 0,
 };
 const listeners = new Set<(s: PlayerSnapshot) => void>();
 /** A faixa atual veio da sua fila (mesma regra do `player/queue.rs`). */
@@ -129,7 +131,7 @@ function route(track: Track | null): PlayerSnapshot["route"] {
 }
 
 function set(next: Partial<PlayerSnapshot>): PlayerSnapshot {
-  player = { ...player, ...next };
+  player = { ...player, ...next, version: player.version + 1 };
   player.route = route(player.current);
   player.positionMs = Math.min(position(), player.current?.durationMs ?? 0);
   listeners.forEach((cb) => cb(player));
@@ -167,6 +169,14 @@ const commands: Record<string, (args: any) => unknown> = {
     ),
   playlist_tracks: ({ source }) => TRACKS.filter((t) => t.source === source),
   imported_playlists: () => imported,
+  local_playlists: () => locals,
+  create_local_playlist: ({ name, tracks }) =>
+    (locals = [{ id: `local${locals.length}`, name, tracks }, ...locals]),
+  add_to_local_playlist: ({ id, tracks }) =>
+    (locals = locals.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...tracks] } : p))),
+  remove_from_local_playlist: ({ id, index }) =>
+    (locals = locals.map((p) => (p.id === id ? { ...p, tracks: p.tracks.filter((_, i) => i !== index) } : p))),
+  delete_local_playlist: ({ id }) => (locals = locals.filter((p) => p.id !== id)),
   import_playlist: ({ link }) => {
     const source: Source = link.includes("spotify") ? "spotify" : link.includes("soundcloud") ? "soundcloud" : "youtube_music";
     imported = [{ id: `imp${imported.length}`, source, name: "Playlist importada", owner: null, trackCount: null, artwork: null }, ...imported];
@@ -282,6 +292,7 @@ const commands: Record<string, (args: any) => unknown> = {
 
 let favorites: Track[] = [];
 let imported: Playlist[] = [];
+let locals: LocalPlaylist[] = [];
 
 // Conta GlobalMusic de mentira: começa deslogada; `?logado` na URL já entra.
 let me: Me | null = location.search.includes("logado")

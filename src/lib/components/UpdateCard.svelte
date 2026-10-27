@@ -2,44 +2,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Download from "@lucide/svelte/icons/download";
-  import { api, errorMessage } from "$lib/api";
-  import type { UpdateInfo, UpdateProgress } from "$lib/types";
+  import { api } from "$lib/api";
+  import { updates } from "$lib/updates.svelte";
 
   /** Espera o app assentar antes da primeira verificação: abrir rápido vem primeiro. */
   const FIRST_CHECK_MS = 5_000;
   const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
-  let update = $state<UpdateInfo | null>(null);
-  let dismissed = $state(false);
-  let installing = $state(false);
-  let progress = $state<UpdateProgress | null>(null);
-  let error = $state<string | null>(null);
-
+  const update = $derived(updates.update);
+  const progress = $derived(updates.progress);
   const pct = $derived(progress?.total ? Math.min(100, (progress.downloaded / progress.total) * 100) : null);
-
-  async function check() {
-    if (installing) return;
-    try {
-      update = await api.checkUpdate();
-      dismissed = false;
-    } catch {
-      // Verificação automática: sem rede ou VPS fora do ar não é motivo para incomodar ninguém.
-    }
-  }
-
-  async function install() {
-    installing = true;
-    error = null;
-    try {
-      await api.installUpdate(); // não retorna: o app reinicia na versão nova
-    } catch (e) {
-      error = errorMessage(e);
-      installing = false;
-    }
-  }
+  const check = () => void updates.check();
 
   onMount(() => {
-    void api.onUpdateProgress((p) => (progress = p));
+    void api.onUpdateProgress((p) => (updates.progress = p));
     const first = setTimeout(check, FIRST_CHECK_MS);
     const every = setInterval(check, CHECK_EVERY_MS);
     return () => {
@@ -51,7 +27,7 @@
   const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
 </script>
 
-{#if update && !dismissed}
+{#if update && !updates.dismissed}
   <aside class="update glass" role="status" aria-live="polite">
     <div class="head">
       <span class="icon"><Download size={16} strokeWidth={1.8} /></span>
@@ -65,7 +41,7 @@
       <p class="notes">{update.notes}</p>
     {/if}
 
-    {#if installing}
+    {#if updates.installing}
       <div class="bar" aria-hidden="true"><span style:width="{pct ?? 15}%" class:indeterminate={pct === null}></span></div>
       <p class="status tabular">
         {#if progress && pct !== null && pct >= 100}
@@ -78,13 +54,13 @@
       </p>
     {:else}
       <div class="actions">
-        <button class="btn" onclick={install}>Atualizar agora</button>
-        <button class="btn ghost" onclick={() => (dismissed = true)}>Depois</button>
+        <button class="btn" onclick={() => updates.install()}>Atualizar agora</button>
+        <button class="btn ghost" onclick={() => (updates.dismissed = true)}>Depois</button>
       </div>
     {/if}
 
-    {#if error}
-      <p class="error" role="alert">{error}</p>
+    {#if updates.error}
+      <p class="error" role="alert">{updates.error}</p>
     {/if}
   </aside>
 {/if}

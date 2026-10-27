@@ -491,6 +491,53 @@ com o token de reprodução, que é do client oficial e não tem essa restriçã
 (`SpotifyProvider::shared_playlist_tracks`). Sem Client ID próprio nada muda, porque o token de sempre já é
 o do client oficial. Não custa requisição extra: o app sabe de antemão que a playlist é importada.
 
+**Fila carregando de verdade (lido no log da 0.5.0):**
+- **Pular matava a preparação.** A pré-carga da fila era cancelada a cada troca de faixa. O yt-dlp
+  é compartilhado (`WeakShared`) e morre quando ninguém mais o segura, então pular para a música que
+  estava sendo preparada matava o yt-dlp dela no meio, e o play começava do zero: "I Wanna Be Honest"
+  levou 4,9 s. Agora a pré-carga não é cancelada e o play reaproveita o mesmo yt-dlp.
+- **A mesma faixa baixava duas vezes** ("pré-carregada" aparecia duas vezes no log). Um conjunto de
+  pré-cargas em andamento (`Preloading`, que se desmarca no `Drop`) evita a repetição.
+- **Mais à frente:** as 2 próximas são baixadas inteiras e a 3ª tem a URL resolvida, tudo em paralelo
+  (antes era só 1, uma depois da outra). "Adicionar à fila" também passa a pré-carregar.
+- **librespot:** desiste na **primeira** recusa da chave de áudio (antes eram 2, cada uma custando ~3 s)
+  e só tenta de novo depois de 24 h.
+
+**"Carregando…" eterno com música do cache:** a resposta do comando "tocar" leva um snapshot tirado
+*antes* de a música começar ("carregando"). Do cache, a música começa em 0 s, e o evento "começou"
+chegava à tela antes da resposta. A resposta atrasada sobrescrevia o estado certo. Agora cada snapshot tem
+um número de versão (`Player::touch`), e a UI descarta um snapshot mais velho que o que já mostra.
+
+**Teclas de mídia** (`media_keys.rs`, biblioteca `souvlaki`): o app se registra no painel de mídia do
+sistema (SMTC no Windows, "Agora tocando" no macOS, MPRIS no Linux), que é por onde o Windows entrega
+Fn+F8 e as outras teclas de mídia ao player que está tocando. Atalho global seria pior: briga com outros
+apps e não aparece no painel. Os controles vivem na thread principal (`run_on_main_thread`), porque o
+macOS exige isso.
+
+**Usar sem conta:**
+- Playlists do GlobalMusic (`local_playlists.rs`): faixas de qualquer fonte, criadas pelo card "+" da
+  biblioteca ou pelo menu da faixa ("Adicionar à playlist"). As sugestões (tocadas por último e a última
+  busca) ficam no `localStorage`, porque são só uma conveniência deste computador.
+- Playlist do Spotify importada sem conta: as faixas vêm da página pública do player incorporável
+  (`open.spotify.com/embed/...`, a mesma que blogs usam) e tocam pelo YouTube.
+- Curtir sem a conta daquele serviço não mostra mais erro: a curtida fica no GlobalMusic.
+- Playlists feitas pelo próprio Spotify ("This Is", Daily Mix, Descobertas da Semana) são bloqueadas para
+  apps de terceiros na Web API desde nov/2024 e davam erro. Agora, quando a API responde 403, as faixas vêm
+  da mesma página pública. Depois, se der, são completadas com capa e álbum por `GET /tracks?ids=` (50 por
+  chamada). Sem isso, a playlist abre do mesmo jeito, só sem as capas.
+- E essas playlists automáticas **não aparecem mais na Biblioteca** (dono com id `spotify`): a pessoa não
+  as montou. A leitura pela página pública continua servindo para quem importar uma delas por link.
+- A busca já funcionava sem conta no YouTube Music e no SoundCloud.
+
+**Interface:**
+- Abre na Biblioteca.
+- Botão para esconder o painel da esquerda (fica só o player); as abas da barra de título o reabrem.
+- Maximizada ou em tela cheia, a janela perde os cantos arredondados, que deixavam ver o fundo nas quinas.
+- "Buscar atualizações" no rodapé do Perfil (o estado é compartilhado com o card em `updates.svelte.ts`).
+
+**Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
+no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
+
 **Sincronizar o perfil:** o servidor guarda nome e foto de cada login vinculado (migração `0002`, com backup
 do banco antes) e oferece `POST /me/profile-from`. A pessoa escolhe "usar o perfil do Discord/Spotify".
 

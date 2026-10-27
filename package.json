@@ -1,7 +1,7 @@
 {
   "name": "globalmusic",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Player de música global e leve: Spotify, YouTube Music e SoundCloud em um só lugar.",
   "type": "module",
   "scripts": {
