@@ -21,7 +21,11 @@
     "targets": "all",
     "createUpdaterArtifacts": true,
     "category": "Music",
+    "publisher": "GlobalMusic",
+    "copyright": "© 2026 GlobalMusic",
+    "homepage": "https://github.com/216saint/GlobalMusic",
     "shortDescription": "Spotify, YouTube Music e SoundCloud em um só player leve.",
+    "longDescription": "GlobalMusic junta Spotify, YouTube Music e SoundCloud num player leve: busca nas três fontes, biblioteca unificada, playlists próprias e fila que mistura faixas de qualquer lugar.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -30,7 +34,14 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "languages": ["PortugueseBR"],
+        "displayLanguageSelector": false
+      }
     },
     "macOS": {
       "signingIdentity": "-"

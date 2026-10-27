@@ -560,6 +560,13 @@ macOS exige isso.
   foi desligado, exceto em campos de texto. Playlists ganharam menu próprio: tocar, abrir, editar,
   compartilhar, apagar e tirar da biblioteca.
 
+**Instalador com a cara do GlobalMusic** (`bundle.windows.nsis` no `tauri.conf.json`):
+- Painel lateral das telas de boas-vindas e de conclusão (`src-tauri/installer/sidebar.bmp`, 164×314) e
+  cabeçalho das outras telas (`header.bmp`, 150×57). O NSIS só aceita BMP nesses tamanhos. As imagens foram
+  desenhadas por código, com as mesmas barras de `Bars.svelte`.
+- Instalador em português (`PortugueseBR`), ícone do app e editor/copyright ("GlobalMusic"), que aparecem
+  em "Aplicativos instalados" do Windows.
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 
