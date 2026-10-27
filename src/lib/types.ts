@@ -1,0 +1,149 @@
+// Espelho de `src-tauri/src/models.rs` e `player/mod.rs`.
+
+export type Source = "spotify" | "youtube_music" | "soundcloud";
+
+export const SOURCES: Source[] = ["spotify", "youtube_music", "soundcloud"];
+
+export const SOURCE_LABEL: Record<Source, string> = {
+  spotify: "Spotify",
+  youtube_music: "YouTube Music",
+  soundcloud: "SoundCloud",
+};
+
+/** `thumb` (~160px) para listas e fundo; `full` (~544px) só no "tocando agora". */
+export interface Artwork {
+  thumb: string;
+  full: string;
+}
+
+export interface Track {
+  id: string;
+  source: Source;
+  title: string;
+  artists: string[];
+  album: string | null;
+  durationMs: number;
+  artwork: Artwork | null;
+  isrc: string | null;
+}
+
+export interface Playlist {
+  id: string;
+  source: Source;
+  name: string;
+  owner: string | null;
+  trackCount: number | null;
+  artwork: Artwork | null;
+}
+
+export interface SourceResults<T> {
+  source: Source;
+  items: T[];
+  error: string | null;
+}
+
+export interface AccountStatus {
+  source: Source;
+  connected: boolean;
+  displayName: string | null;
+  avatarUrl: string | null;
+  premium: boolean | null;
+  /** Algo que a pessoa precisa fazer nesta conta (ex.: reconectar). */
+  notice: string | null;
+}
+
+export type PlaybackRoute = { kind: "spotify_native" } | { kind: "youtube_fallback" } | { kind: "direct_stream" };
+
+export interface FavoriteResult {
+  favorites: Track[];
+  remoteError: string | null;
+}
+
+/** Link público da faixa no serviço de origem (quando dá para montar só com o ID). */
+export function trackUrl(track: Track): string | null {
+  if (track.source === "spotify") return `https://open.spotify.com/track/${track.id}`;
+  if (track.source === "youtube_music") return `https://music.youtube.com/watch?v=${track.id}`;
+  return null;
+}
+
+/** Espelho de `src-tauri/src/updates.rs`. */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}
+
+export interface PlayerSnapshot {
+  current: Track | null;
+  route: PlaybackRoute | null;
+  /** A lista de onde a pessoa deu play (playlist, busca…) e onde ela está nessa lista. */
+  context: Track[];
+  contextIndex: number | null;
+  contextName: string | null;
+  /** A sua fila: o que foi posto à mão. Toca antes do resto do contexto. */
+  upNext: Track[];
+  /** Intenção de tocar (verdadeiro também enquanto carrega). */
+  playing: boolean;
+  /** Resolvendo o áudio: ainda sem som. */
+  loading: boolean;
+  /** Posição no instante do snapshot; a UI avança localmente a partir daqui. */
+  positionMs: number;
+  volume: number;
+}
+
+// Letras (LRCLIB) e versões no YouTube: espelho de `lyrics.rs` e `commands.rs`.
+
+export interface LyricLine {
+  timeMs: number;
+  text: string;
+}
+
+export interface Lyrics {
+  /** Versos com tempo (vazio se só houver a letra corrida). */
+  synced: LyricLine[];
+  plain: string | null;
+  instrumental: boolean;
+}
+
+export interface Alternatives {
+  /** O vídeo que toca hoje no lugar da faixa. */
+  current: string | null;
+  options: Track[];
+}
+
+/** Uma faixa que ainda vai tocar: na sua fila ou no resto do contexto (`player/queue.rs`). */
+export type QueueSlot = { list: "queued"; index: number } | { list: "context"; index: number };
+
+// Espelho de `src-tauri/src/social.rs` (servidor social do GlobalMusic).
+
+export type LoginProvider = "discord" | "spotify";
+
+/** A própria conta GlobalMusic. */
+export interface Me {
+  id: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  discordLinked: boolean;
+  spotifyLinked: boolean;
+}
+
+/** O que os outros veem de alguém. */
+export interface PublicUser {
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface FriendList {
+  friends: PublicUser[];
+  /** Pedidos que chegaram (esperando você aceitar). */
+  incoming: PublicUser[];
+  /** Pedidos que você mandou (esperando a outra pessoa). */
+  outgoing: PublicUser[];
+}

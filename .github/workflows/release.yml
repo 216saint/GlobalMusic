@@ -1,0 +1,74 @@
+# Gera os instaladores de Windows, macOS e Ubuntu e anexa numa Release (rascunho).
+# Disparo: `git tag v0.1.0 && git push --tags`, ou manualmente na aba Actions.
+# Explicação: docs/conceitos/distribuicao.md
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: ""
+            args: "--config src-tauri/tauri.sidecar.conf.json"
+          - platform: macos-latest
+            target: "universal-apple-darwin"
+            args: "--target universal-apple-darwin --config src-tauri/tauri.sidecar.conf.json"
+          - platform: ubuntu-22.04
+            target: ""
+            args: "--config src-tauri/tauri.sidecar.conf.json"
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências do sistema (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf libasound2-dev libssl-dev libdbus-1-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # O build universal do macOS compila para Apple Silicon e Intel.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: npm ci
+
+      # yt-dlp oficial (SHA-256 verificado) embutido no instalador como "sidecar".
+      - run: npm run setup:yt-dlp -- ${{ matrix.target }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: GlobalMusic v__VERSION__
+          releaseBody: |
+            Baixe o instalador do seu sistema em **Assets**, logo abaixo.
+            - Windows: `GlobalMusic_*_x64-setup.exe`
+            - macOS: `GlobalMusic_*_universal.dmg`
+            - Ubuntu: `globalmusic_*_amd64.deb`
+            O app não é assinado: veja docs/conceitos/distribuicao.md para liberar a primeira execução.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

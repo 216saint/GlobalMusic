@@ -1,0 +1,21 @@
+node_modules
+/dist
+# Cópia dos instaladores gerados (`npm run app:build*`)
+/instaladores
+# Destino do `npm run release` (usuário/servidor da VPS)
+/release.config.json
+.DS_Store
+
+# Segredos (client IDs/secrets dos provedores)
+.env
+.env.*
+!.env.example
+
+# Config local do Cargo (tira o `target` de dentro do OneDrive nesta máquina)
+.cargo/config.toml
+
+# Sidecar baixado por `npm run setup:yt-dlp`
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+
+vite.config.ts.timestamp-*

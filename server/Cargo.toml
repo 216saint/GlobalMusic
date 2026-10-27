@@ -1,0 +1,30 @@
+[package]
+name = "globalmusic-api"
+version = "0.1.0"
+description = "Servidor social do GlobalMusic: contas, perfis e amizades (ver docs/decisoes/0008-servidor-social.md)."
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "fs"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# rustls com `ring`: compila no servidor sem OpenSSL nem CMake.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand = "0.9"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Fotos de perfil: decodifica PNG/JPEG/WebP/GIF e reencoda em JPEG 256×256 (descarta metadados).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true

@@ -1,0 +1,403 @@
+// Estado global da UI (Svelte 5 runes). Uma instância, importada onde precisar.
+
+import { api, errorMessage } from "./api";
+import type { AccountStatus, Lyrics, PlayerSnapshot, Playlist, QueueSlot, Source, SourceResults, Track } from "./types";
+import { SOURCE_LABEL } from "./types";
+
+export type Tab = "search" | "library";
+export type Filter = Source | "all";
+export type Panel = "now" | "queue" | "friends" | "profile";
+
+/** Lista aberta na biblioteca: uma playlist de um serviço ou as curtidas do GlobalMusic. */
+export interface OpenedPlaylist {
+  kind: "playlist" | "favorites";
+  id: string;
+  title: string;
+  /** `null` = lista do próprio GlobalMusic (várias fontes). */
+  source: Source | null;
+  artworkUrl: string | null;
+  tracks: Track[];
+  loading: boolean;
+  error: string | null;
+}
+
+/** Letra da faixa atual (carregada quando a pessoa abre a letra). */
+export interface LyricsState {
+  /** De qual faixa é (fonte:id): trocou a música, carrega de novo. */
+  key: string;
+  loading: boolean;
+  data: Lyrics | null;
+  error: string | null;
+}
+
+/** Janela "Escolher versão do YouTube". */
+export interface VersionPicker {
+  track: Track;
+  loading: boolean;
+  current: string | null;
+  options: Track[];
+  error: string | null;
+}
+
+/** Menu do botão direito sobre uma faixa. */
+export interface ContextMenu {
+  track: Track;
+  x: number;
+  y: number;
+}
+
+const EMPTY_PLAYER: PlayerSnapshot = {
+  current: null,
+  route: null,
+  context: [],
+  contextIndex: null,
+  contextName: null,
+  upNext: [],
+  playing: false,
+  loading: false,
+  positionMs: 0,
+  volume: 0.8,
+};
+const TICK_MS = 500;
+const TOAST_MS = 5000;
+
+/** Intercala as fontes (A1, B1, C1, A2…) para "Todas" não virar três blocos. */
+function interleave<T>(groups: T[][]): T[] {
+  const out: T[] = [];
+  for (let i = 0; groups.some((g) => i < g.length); i++) {
+    for (const g of groups) if (i < g.length) out.push(g[i]);
+  }
+  return out;
+}
+
+const sameTrack = (a: Track, b: Track) => a.source === b.source && a.id === b.id;
+const trackKey = (t: Track) => `${t.source}:${t.id}`;
+/** Quantas faixas do topo de uma lista mandamos preparar (o backend também limita). */
+const PREPARE_TOP = 4;
+
+class AppStore {
+  tab = $state<Tab>("search");
+  filter = $state<Filter>("all");
+  panel = $state<Panel>("now");
+
+  query = $state("");
+  searching = $state(false);
+  results = $state<SourceResults<Track>[]>([]);
+  playlists = $state<SourceResults<Playlist>[]>([]);
+  accounts = $state<AccountStatus[]>([]);
+  busySource = $state<Source | null>(null);
+  notice = $state<string | null>(null);
+
+  player = $state<PlayerSnapshot>(EMPTY_PLAYER);
+  positionMs = $state(0);
+  /** Última faixa que não pôde tocar (o player já pulou para a próxima). */
+  playbackError = $state<string | null>(null);
+  /** Lista aberta na biblioteca (tela de detalhe). */
+  opened = $state<OpenedPlaylist | null>(null);
+  /** Curtidas do GlobalMusic (todas as fontes juntas). */
+  favorites = $state<Track[]>([]);
+  menu = $state<ContextMenu | null>(null);
+  /** Aviso curto no rodapé da janela (ex.: "Adicionada à fila"). */
+  toast = $state<string | null>(null);
+  /** A letra aparece no lugar da capa. */
+  showLyrics = $state(false);
+  lyrics = $state<LyricsState | null>(null);
+  versions = $state<VersionPicker | null>(null);
+
+  #searchSeq = 0;
+  #playlistSeq = 0;
+  #errorTimer: ReturnType<typeof setTimeout> | undefined;
+  #toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+  get tracks(): Track[] {
+    const groups = this.results.filter((r) => this.filter === "all" || r.source === this.filter).map((r) => r.items);
+    return interleave(groups);
+  }
+
+  get playlistItems(): Playlist[] {
+    const groups = this.playlists.filter((r) => this.filter === "all" || r.source === this.filter).map((r) => r.items);
+    return interleave(groups);
+  }
+
+  /** A sua fila (o que foi posto à mão): toca antes do resto da lista. */
+  get upNext(): { track: Track; slot: QueueSlot }[] {
+    return this.player.upNext.map((track, index) => ({ track, slot: { list: "queued", index } }));
+  }
+
+  /** O resto da lista de onde a pessoa deu play, depois da posição atual. */
+  get contextRest(): { track: Track; slot: QueueSlot }[] {
+    const start = (this.player.contextIndex ?? -1) + 1;
+    return this.player.context.slice(start).map((track, i) => ({ track, slot: { list: "context", index: start + i } }));
+  }
+
+  /**
+   * Fontes que **falharam** no recorte atual, para a UI explicar o vazio. Fonte não conectada
+   * não conta: é escolha da pessoa (o Perfil mostra o que está conectado), não um erro.
+   */
+  failures(groups: SourceResults<unknown>[]) {
+    return groups.filter(
+      (r) => r.error && !r.error.includes("não está conectado") && (this.filter === "all" || r.source === this.filter),
+    );
+  }
+
+  isFavorite(track: Track) {
+    return this.favorites.some((f) => sameTrack(f, track));
+  }
+
+  async init() {
+    await api.onPlayerState((s) => this.#applyPlayer(s));
+    await api.onPlayerNotice((message) => this.notify(message));
+    await api.onPlayerError((message) => {
+      this.playbackError = message;
+      clearTimeout(this.#errorTimer);
+      this.#errorTimer = setTimeout(() => (this.playbackError = null), 8000);
+    });
+    const [player, favorites] = await Promise.all([
+      api.playerState(),
+      api.favorites(),
+      this.loadAccounts(),
+      this.loadLibrary(),
+    ]);
+    this.favorites = favorites;
+    this.#applyPlayer(player);
+    setInterval(() => this.#tick(), TICK_MS);
+  }
+
+  notify(message: string) {
+    this.toast = message;
+    clearTimeout(this.#toastTimer);
+    this.#toastTimer = setTimeout(() => (this.toast = null), TOAST_MS);
+  }
+
+  /** Trocar de fonte sai de uma playlist de outra fonte (sempre mostra a biblioteca certa). */
+  setFilter(filter: Filter) {
+    this.filter = filter;
+    const source = this.opened?.source;
+    if (this.opened && filter !== "all" && source !== filter) this.closePlaylist();
+    if (this.tab === "search") this.prepareVisible(this.tracks);
+  }
+
+  /**
+   * Faixas que apareceram na tela: o backend já resolve o áudio das primeiras, para o clique
+   * não esperar o yt-dlp (~4 s). Uma lista nova substitui a anterior.
+   */
+  prepareVisible(tracks: Track[]) {
+    if (tracks.length) void api.prepare($state.snapshot(tracks.slice(0, PREPARE_TOP))).catch(() => {});
+  }
+
+  /** O mouse parou numa faixa: boa chance de ela ser clicada. */
+  prepareHover(track: Track) {
+    void api.prepare([$state.snapshot(track)], true).catch(() => {});
+  }
+
+  setTab(tab: Tab) {
+    this.tab = tab;
+  }
+
+  async search(query: string) {
+    this.query = query;
+    const seq = ++this.#searchSeq;
+    if (!query.trim()) {
+      this.results = [];
+      this.searching = false;
+      return;
+    }
+    this.searching = true;
+    try {
+      const results = await api.search(query);
+      if (seq === this.#searchSeq) {
+        this.results = results;
+        this.prepareVisible(this.tracks);
+      }
+    } catch (e) {
+      if (seq === this.#searchSeq) this.notice = errorMessage(e);
+    } finally {
+      if (seq === this.#searchSeq) this.searching = false;
+    }
+  }
+
+  async loadLibrary() {
+    this.playlists = await api.libraryPlaylists();
+  }
+
+  async loadAccounts() {
+    this.accounts = await api.accounts();
+  }
+
+  async connect(source: Source) {
+    this.busySource = source;
+    this.notice = null;
+    try {
+      await api.connectAccount(source);
+      await Promise.all([this.loadAccounts(), this.loadLibrary()]);
+    } catch (e) {
+      this.notice = errorMessage(e);
+    } finally {
+      this.busySource = null;
+    }
+  }
+
+  async disconnect(source: Source) {
+    await api.disconnectAccount(source);
+    await Promise.all([this.loadAccounts(), this.loadLibrary()]);
+  }
+
+  async play(tracks: Track[], start: number, contextName: string | null = null) {
+    this.#applyPlayer(await api.play($state.snapshot(tracks), start, contextName));
+  }
+
+  async enqueue(track: Track) {
+    this.#applyPlayer(await api.enqueue($state.snapshot(track)));
+    this.notify(`"${track.title}" entrou na sua fila`);
+  }
+
+  async playNext(track: Track) {
+    this.#applyPlayer(await api.playNext($state.snapshot(track)));
+    this.notify(`"${track.title}" toca a seguir`);
+  }
+
+  async removeFromQueue(slot: QueueSlot) {
+    this.#applyPlayer(await api.removeFromQueue(slot));
+  }
+
+  async jumpTo(slot: QueueSlot) {
+    this.#applyPlayer(await api.jumpTo(slot));
+  }
+
+  /** Curte/descurte no GlobalMusic e no serviço de origem da faixa. */
+  async toggleFavorite(track: Track) {
+    const liked = !this.isFavorite(track);
+    try {
+      const result = await api.setFavorite($state.snapshot(track), liked);
+      this.favorites = result.favorites;
+      if (this.opened?.kind === "favorites") this.opened = { ...this.opened, tracks: result.favorites };
+      const where = `no GlobalMusic e no ${SOURCE_LABEL[track.source]}`;
+      this.notify(
+        result.remoteError
+          ? `${liked ? "Curtida" : "Removida"} no GlobalMusic. ${result.remoteError}`
+          : liked
+            ? `Curtida ${where}`
+            : `Removida das curtidas ${where}`,
+      );
+    } catch (e) {
+      this.notify(errorMessage(e));
+    }
+  }
+
+  /** Abre a playlist na biblioteca (lista as faixas); tocar é uma escolha separada. */
+  async openPlaylist(playlist: Playlist) {
+    const seq = ++this.#playlistSeq;
+    this.opened = {
+      kind: "playlist",
+      id: playlist.id,
+      title: playlist.name,
+      source: playlist.source,
+      artworkUrl: playlist.artwork?.thumb ?? null,
+      tracks: [],
+      loading: true,
+      error: null,
+    };
+    try {
+      const tracks = await api.playlistTracks(playlist.source, playlist.id);
+      if (seq === this.#playlistSeq && this.opened) {
+        this.opened = { ...this.opened, tracks, loading: false };
+        this.prepareVisible(tracks);
+      }
+    } catch (e) {
+      if (seq === this.#playlistSeq && this.opened) this.opened = { ...this.opened, loading: false, error: errorMessage(e) };
+    }
+  }
+
+  openFavorites() {
+    this.#playlistSeq++;
+    this.opened = {
+      kind: "favorites",
+      id: "globalmusic-favorites",
+      title: "Curtidas no GlobalMusic",
+      source: null,
+      artworkUrl: null,
+      tracks: this.favorites,
+      loading: false,
+      error: null,
+    };
+    this.prepareVisible(this.favorites);
+  }
+
+  closePlaylist() {
+    this.#playlistSeq++;
+    this.opened = null;
+  }
+
+  openMenu(track: Track, event: MouseEvent) {
+    event.preventDefault();
+    this.menu = { track, x: event.clientX, y: event.clientY };
+  }
+
+  toggleLyrics() {
+    this.showLyrics = !this.showLyrics;
+    if (this.showLyrics) void this.loadLyrics();
+  }
+
+  /** Carrega a letra da faixa atual, se ainda não estiver carregada (chamada também ao trocar de música). */
+  async loadLyrics() {
+    const track = this.player.current;
+    if (!this.showLyrics || !track) return;
+    const key = trackKey(track);
+    if (this.lyrics?.key === key) return;
+    this.lyrics = { key, loading: true, data: null, error: null };
+    try {
+      const data = await api.lyrics($state.snapshot(track));
+      if (this.lyrics?.key === key) this.lyrics = { key, loading: false, data, error: null };
+    } catch (e) {
+      if (this.lyrics?.key === key) this.lyrics = { key, loading: false, data: null, error: errorMessage(e) };
+    }
+  }
+
+  async openVersions(track: Track) {
+    this.versions = { track, loading: true, current: null, options: [], error: null };
+    try {
+      const found = await api.trackAlternatives($state.snapshot(track));
+      if (this.versions?.track === track) this.versions = { ...this.versions, loading: false, ...found };
+    } catch (e) {
+      if (this.versions?.track === track) this.versions = { ...this.versions, loading: false, error: errorMessage(e) };
+    }
+  }
+
+  async chooseVersion(option: Track) {
+    const picker = this.versions;
+    if (!picker) return;
+    this.versions = null;
+    try {
+      await api.chooseTrackVersion($state.snapshot(picker.track), option.id);
+      this.notify(`"${picker.track.title}" vai tocar com a versão escolhida`);
+    } catch (e) {
+      this.notify(errorMessage(e));
+    }
+  }
+
+  /** Arrastando a barra: só a UI se move; o backend (e o Discord) recebem no fim (`commitSeek`). */
+  previewSeek(positionMs: number) {
+    this.positionMs = positionMs;
+  }
+
+  async commitSeek(positionMs: number) {
+    this.#applyPlayer(await api.seek(positionMs));
+  }
+
+  // A posição oficial vem do backend; entre um snapshot e outro a UI avança sozinha (#tick).
+  #applyPlayer(next: PlayerSnapshot) {
+    this.positionMs = next.positionMs;
+    this.player = next;
+    void this.loadLyrics();
+  }
+
+  #tick() {
+    const current = this.player.current;
+    // Carregando = ainda sem som: o relógio fica parado até o backend avisar que começou.
+    if (!this.player.playing || this.player.loading || !current) return;
+    this.positionMs = Math.min(this.positionMs + TICK_MS, current.durationMs);
+    // O fim da faixa é decidido pelo backend (o áudio de verdade acabou), não por este relógio.
+  }
+}
+
+export const app = new AppStore();

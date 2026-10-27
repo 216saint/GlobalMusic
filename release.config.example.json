@@ -1,0 +1,5 @@
+{
+  "ssh": "usuario@216saint.com.br",
+  "remoteDir": "/var/www/globalmusic",
+  "port": 22
+}

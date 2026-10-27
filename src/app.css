@@ -1,0 +1,116 @@
+/* GlobalMusic — tema Glassmorphism.
+   Regra de ouro: o desfoque acontece uma vez só (fundo ambiente ou vidro nativo do SO).
+   Os painéis apenas tingem; nada de backdrop-filter empilhado, que custa GPU e RAM. */
+
+:root {
+  /* Do ícone: barra acesa, barra apagada, chassi grafite. */
+  --violet: #7b6cff;
+  --violet-bright: #9a8fff;
+  --violet-deep: #4b3fd6;
+  --violet-dim: rgba(123, 108, 255, 0.3);
+  --graphite: #16151d;
+
+  --ink: #f5f4ff;
+  --ink-2: rgba(245, 244, 255, 0.68);
+  --ink-3: rgba(245, 244, 255, 0.44);
+
+  --tint-1: rgba(255, 255, 255, 0.06);
+  --tint-2: rgba(255, 255, 255, 0.1);
+  --tint-3: rgba(255, 255, 255, 0.16);
+  --edge: rgba(255, 255, 255, 0.13);
+  --edge-top: rgba(255, 255, 255, 0.22);
+
+  --spotify: #1ed760;
+  --youtube_music: #ff1f3d;
+  --soundcloud: #ff5500;
+
+  --r-window: 12px;
+  --r-panel: 22px;
+  --r-art: 20px;
+  --r-row: 12px;
+
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", Ubuntu, Cantarell,
+    "Noto Sans", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Display", Ubuntu,
+    system-ui, sans-serif;
+
+  color-scheme: dark;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Transparente: no Windows/macOS o vidro nativo aparece por trás. */
+  background: transparent;
+  user-select: none;
+}
+
+/* Linux e navegador: sem vidro nativo, a própria janela tem chassi. */
+html[data-glass="drawn"] body {
+  background: var(--graphite);
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet-bright);
+  outline-offset: 2px;
+}
+
+.glass {
+  background: linear-gradient(180deg, var(--tint-2), var(--tint-1));
+  border: 1px solid var(--edge);
+  border-top-color: var(--edge-top);
+  border-radius: var(--r-panel);
+  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.55);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

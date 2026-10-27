@@ -1,0 +1,69 @@
+[package]
+name = "globalmusic"
+version = "0.3.0"
+description = "Player de música global e leve: Spotify, YouTube Music e SoundCloud."
+authors = ["GlobalMusic"]
+edition = "2024"
+
+[lib]
+# O sufixo `_lib` evita conflito de nome entre lib e bin no Windows.
+# https://github.com/rust-lang/cargo/issues/8519
+name = "globalmusic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["spotify-premium"]
+# Reprodução nativa do Spotify via librespot (exige conta Premium em runtime).
+# Sem esta feature, faixas do Spotify sempre caem no fallback do YouTube.
+spotify-premium = ["dep:librespot"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `macos-private-api` libera janela transparente + vibrancy no macOS (sem efeito nos outros SOs).
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-oauth = "2"
+tauri-plugin-os = "2"
+# Atualização automática assinada (ver docs/decisoes/0007-atualizacao-automatica.md).
+tauri-plugin-updater = "2"
+# Log em arquivo: no app instalado não há terminal para ver erros.
+tauri-plugin-log = "2"
+log = "0.4"
+url = "2"
+rand = "0.9"
+sha2 = "0.10"
+sha1 = "0.10"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+# TLS nativo do Windows (SChannel) em toda a árvore: binário menor e sem toolchain NASM/aws-lc.
+# 0.13: a mesma versão do stream-download (duas versões = dois clientes HTTP no binário).
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "native-tls", "stream", "gzip"] }
+# Cofre do SO: Credential Manager (Windows), Keychain (macOS), Secret Service (Linux).
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+
+# --- Spotify Premium (a Web API é chamada direto, sem SDK: ver providers/spotify) ---
+librespot = { version = "0.8", default-features = false, features = ["native-tls", "rodio-backend"], optional = true }
+
+# --- Discord Rich Presence (IPC local com o cliente do Discord) ---
+discord-rich-presence = "1"
+
+# --- Áudio (YouTube Music / SoundCloud / fallback do Spotify Free) ---
+# Symphonia não decodifica Opus: no YouTube pedimos o formato m4a/AAC (itag 140).
+rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "mp4", "vorbis", "flac", "wav"] }
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+
+# https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
