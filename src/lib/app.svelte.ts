@@ -174,6 +174,7 @@ class AppStore {
   /** Quando a playlist aberta e a biblioteca foram lidas pela última vez. */
   #openedAt = 0;
   #libraryAt = 0;
+  #libraryRetry: ReturnType<typeof setTimeout> | undefined;
   #errorTimer: ReturnType<typeof setTimeout> | undefined;
   #toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -330,8 +331,12 @@ class AppStore {
   }
 
   async loadLibrary() {
+    clearTimeout(this.#libraryRetry);
     this.playlists = await api.libraryPlaylists();
     this.#libraryAt = Date.now();
+    // O Spotify pediu um tempo (429): a biblioteca tenta de novo sozinha quando o prazo passar.
+    const wait = Math.max(0, ...this.playlists.map((r) => r.retryIn ?? 0));
+    if (wait) this.#libraryRetry = setTimeout(() => void this.loadLibrary().catch(() => {}), (wait + 1) * 1000);
   }
 
   /**

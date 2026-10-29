@@ -50,8 +50,11 @@ pub async fn playlist_tracks(state: State<'_, AppState>, source: Source, playlis
     // Playlist de outra pessoa, importada por link: no Spotify ela tem um caminho próprio.
     if source == Source::Spotify && state.imports.contains(source, &playlist_id).await {
         return match state.providers.spotify.shared_playlist_tracks(&playlist_id).await {
-            // Sem conta do Spotify: lê a página pública da playlist (as faixas tocam pelo YouTube).
-            Err(Error::NotConnected(_)) => imports::spotify_public_playlist(&state.http, &playlist_id).await,
+            // Sem conta do Spotify, ou com a cota da Web API estourada (429): lê a página pública da
+            // playlist (as faixas tocam pelo YouTube).
+            Err(Error::NotConnected(_) | Error::RateLimited(_)) => {
+                imports::spotify_public_playlist(&state.http, &playlist_id).await
+            }
             other => other,
         };
     }

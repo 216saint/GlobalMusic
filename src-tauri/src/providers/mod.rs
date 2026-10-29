@@ -62,7 +62,8 @@ impl Providers {
             let _ = background.refresh_if_stale().await;
         });
 
-        let spotify = Arc::new(SpotifyProvider::new(store.clone(), http.clone(), client_id));
+        let library_cache = app.path().app_data_dir().ok().map(|d| d.join("spotify-library"));
+        let spotify = Arc::new(SpotifyProvider::new(store.clone(), http.clone(), client_id, library_cache));
         let youtube = Arc::new(YoutubeMusicProvider::new(app.clone(), http.clone()));
         let soundcloud = Arc::new(SoundcloudProvider::new(app.clone(), http.clone()));
         let all: Vec<Arc<dyn MusicProvider>> = vec![spotify.clone(), youtube.clone(), soundcloud.clone()];

@@ -10,13 +10,17 @@
 //! reprodução (client oficial, `PLAYBACK_KEY`), que não gasta a cota da Web API.
 //!
 //! - `client_id`: auto-atualização do client ID (ver ADR 0003);
-//! - `http`: requisições com tratamento de 429 (Retry-After).
+//! - `http`: requisições com tratamento de 429 (Retry-After);
+//! - `cache`: última cópia da biblioteca, mostrada quando o Spotify limita (429).
 
 mod api;
+mod cache;
 mod client_id;
 mod http;
 
 pub use client_id::ClientId;
+
+use cache::LibraryCache;
 
 use serde::de::DeserializeOwned;
 
@@ -30,11 +34,12 @@ const MAX_TRACK_PAGES: usize = 10; // 10 × 100 (playlist) ou 10 × 50 (curtidas
 /// Máximo de ids por chamada de `GET /tracks`.
 const SEVERAL_TRACKS: usize = 50;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 
@@ -74,11 +79,30 @@ pub struct SpotifyProvider {
     client_id: Arc<ClientId>,
     /// Último `/me` bem-sucedido e quando foi lido.
     profile: Mutex<Option<(Instant, AccountStatus)>>,
+    library: LibraryCache,
 }
 
 impl SpotifyProvider {
-    pub fn new(store: TokenStore, http: reqwest::Client, client_id: Arc<ClientId>) -> Self {
-        Self { store, http, client_id, profile: Mutex::new(None) }
+    pub fn new(store: TokenStore, http: reqwest::Client, client_id: Arc<ClientId>, library_dir: Option<PathBuf>) -> Self {
+        Self { store, http, client_id, profile: Mutex::new(None), library: LibraryCache::new(library_dir) }
+    }
+
+    /// `fresh` deu certo: guarda a cópia. Falhou (429, sem rede…): devolve a última cópia, se houver.
+    fn cached<T: Serialize + DeserializeOwned>(&self, name: &str, fresh: Result<T>) -> Result<T> {
+        match fresh {
+            Ok(value) => {
+                self.library.save(name, &value);
+                Ok(value)
+            }
+            Err(e @ Error::NotConnected(_)) => Err(e),
+            Err(e) => match self.library.load(name) {
+                Some(copy) => {
+                    log::info!("Spotify: usando a cópia guardada de {name} ({e})");
+                    Ok(copy)
+                }
+                None => Err(e),
+            },
+        }
     }
 
     pub fn custom_client_id(&self) -> Option<String> {
@@ -91,6 +115,7 @@ impl SpotifyProvider {
         if self.client_id.set_custom(id)? {
             self.store.clear(Source::Spotify)?;
             self.store.clear_as(PLAYBACK_KEY)?;
+            self.library.clear();
             *self.profile.lock().await = None;
         }
         Ok(())
@@ -153,13 +178,14 @@ impl SpotifyProvider {
         }
     }
 
-    /// Faixas de uma playlist (não as curtidas), lidas com `token`. Se o Spotify recusar (403), tenta
-    /// na ordem: o token do client oficial (quando a pessoa usa Client ID próprio, que fica em
-    /// Development Mode e não lê playlists dos outros) e a página pública da playlist.
+    /// Faixas de uma playlist (não as curtidas), lidas com `token`. Se o Spotify recusar (403) ou
+    /// pedir um tempo (429, comum no client compartilhado), tenta na ordem: o token do client
+    /// oficial (quando a pessoa usa Client ID próprio, que fica em Development Mode e não lê
+    /// playlists dos outros) e a página pública da playlist, que não gasta a cota da Web API.
     async fn playlist_items(&self, token: &str, playlist_id: &str) -> Result<Vec<Track>> {
         let refused = match self.read_items(token, playlist_id).await {
             Ok(tracks) => return Ok(tracks),
-            Err(e) if http_status(&e) == Some(403) => e,
+            Err(e) if http_status(&e) == Some(403) || matches!(e, Error::RateLimited(_)) => e,
             Err(e) => return Err(e),
         };
         let official = self.official_token().await;
@@ -215,6 +241,34 @@ impl SpotifyProvider {
             }
         }
         Ok(if detailed.len() == tracks.len() { detailed } else { tracks })
+    }
+
+    /// Curtidas + playlists da pessoa, lidas agora na Web API.
+    async fn read_playlists(&self) -> Result<Vec<Playlist>> {
+        let liked: Page<Item> = self.get_json("/me/tracks?limit=1").await?;
+        let mut playlists = vec![Playlist {
+            id: LIKED_ID.into(),
+            source: Source::Spotify,
+            name: "Músicas Curtidas".into(),
+            owner: None,
+            track_count: liked.total,
+            artwork: None,
+            url: None,
+        }];
+        let mine: Vec<SpPlaylist> = self.all_pages("/me/playlists?limit=50", MAX_PLAYLIST_PAGES).await?;
+        // As automáticas do Spotify ("This Is", Daily Mix…) ficam de fora: a pessoa não as montou, e
+        // a Web API nem entrega as faixas delas.
+        playlists.extend(mine.into_iter().filter(|p| !p.by_spotify()).map(SpPlaylist::into_playlist));
+        Ok(playlists)
+    }
+
+    async fn read_playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        let token = self.access_token().await?;
+        if playlist_id != LIKED_ID {
+            return self.playlist_items(&token, playlist_id).await;
+        }
+        let items: Vec<Item> = self.all_pages_with(&token, "/me/tracks?limit=50", MAX_TRACK_PAGES).await?;
+        Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
     }
 
     /// Access token da Web API, renovando com o refresh token se precisar.
@@ -439,6 +493,7 @@ impl MusicProvider for SpotifyProvider {
 
     async fn disconnect(&self) -> Result<()> {
         *self.profile.lock().await = None;
+        self.library.clear();
         self.store.clear_as(PLAYBACK_KEY)?;
         self.store.clear(Source::Spotify)
     }
@@ -454,31 +509,13 @@ impl MusicProvider for SpotifyProvider {
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {
-        // TODO: cache local — a biblioteca muda pouco e cada chamada gasta a cota compartilhada.
-        let liked: Page<Item> = self.get_json("/me/tracks?limit=1").await?;
-        let mut playlists = vec![Playlist {
-            id: LIKED_ID.into(),
-            source: Source::Spotify,
-            name: "Músicas Curtidas".into(),
-            owner: None,
-            track_count: liked.total,
-            artwork: None,
-            url: None,
-        }];
-        let mine: Vec<SpPlaylist> = self.all_pages("/me/playlists?limit=50", MAX_PLAYLIST_PAGES).await?;
-        // As automáticas do Spotify ("This Is", Daily Mix…) ficam de fora: a pessoa não as montou, e
-        // a Web API nem entrega as faixas delas.
-        playlists.extend(mine.into_iter().filter(|p| !p.by_spotify()).map(SpPlaylist::into_playlist));
-        Ok(playlists)
+        let fresh = self.read_playlists().await;
+        self.cached("playlists", fresh)
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
-        let token = self.access_token().await?;
-        if playlist_id != LIKED_ID {
-            return self.playlist_items(&token, playlist_id).await;
-        }
-        let items: Vec<Item> = self.all_pages_with(&token, "/me/tracks?limit=50", MAX_TRACK_PAGES).await?;
-        Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
+        let fresh = self.read_playlist_tracks(playlist_id).await;
+        self.cached(&format!("tracks-{playlist_id}"), fresh)
     }
 
     async fn set_liked(&self, track: &Track, liked: bool) -> Result<()> {

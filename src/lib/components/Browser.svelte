@@ -65,7 +65,14 @@
     {#each app.tab === "library" && app.opened ? [] : failures as f (f.source)}
       <p class="failure">
         <SourceIcon source={f.source} size={14} />
-        <span>{SOURCE_LABEL[f.source]}: {f.error}</span>
+        <span>
+          {SOURCE_LABEL[f.source]}:
+          {#if f.retryIn && app.tab === "library"}
+            limite de uso atingido agora. Tento de novo sozinho em {f.retryIn}s.
+          {:else}
+            {f.error}
+          {/if}
+        </span>
       </p>
     {/each}
 

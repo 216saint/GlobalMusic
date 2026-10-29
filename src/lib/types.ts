@@ -58,6 +58,8 @@ export interface SourceResults<T> {
   source: Source;
   items: T[];
   error: string | null;
+  /** A fonte pediu para esperar (429): em quantos segundos vale tentar de novo. */
+  retryIn?: number;
 }
 
 export interface AccountStatus {

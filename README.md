@@ -9,7 +9,7 @@
 A busca procura nas três fontes ao mesmo tempo, a biblioteca junta as playlists de todas as
 suas contas e as suas playlists do GlobalMusic misturam faixas de qualquer lugar. Funciona até sem conta.
 
-<a href="https://globalmusic.216saint.com.br/GlobalMusic_0.6.1_x64-setup.exe"><img alt="Baixar para Windows" src="https://img.shields.io/badge/Baixar-Windows%2010%2B-7b6cff?style=for-the-badge&logo=windows&logoColor=white"></a>
+<a href="https://globalmusic.216saint.com.br/GlobalMusic_0.6.2_x64-setup.exe"><img alt="Baixar para Windows" src="https://img.shields.io/badge/Baixar-Windows%2010%2B-7b6cff?style=for-the-badge&logo=windows&logoColor=white"></a>
 <img alt="RAM abaixo de 80 MB" src="https://img.shields.io/badge/RAM-%3C%2080%20MB-1ed760?style=for-the-badge">
 <img alt="Feito com Tauri e Rust" src="https://img.shields.io/badge/Tauri%202-Rust-f5f4ff?style=for-the-badge&logo=tauri&logoColor=24c8db&labelColor=16151d">
 
@@ -54,7 +54,7 @@ suas contas e as suas playlists do GlobalMusic misturam faixas de qualquer lugar
 
 | Sistema | Como instalar |
 |---|---|
-| **Windows 10+** | [Baixe o instalador](https://globalmusic.216saint.com.br/GlobalMusic_0.6.1_x64-setup.exe) (o Windows pode avisar que o app não é assinado: *Mais informações → Executar assim mesmo*) |
+| **Windows 10+** | [Baixe o instalador](https://globalmusic.216saint.com.br/GlobalMusic_0.6.2_x64-setup.exe) (o Windows pode avisar que o app não é assinado: *Mais informações → Executar assim mesmo*) |
 | **macOS Tahoe+** | Por enquanto, [compile do código](#️-compilando-do-código) |
 | **Ubuntu 22.04+** | Por enquanto, [compile do código](#️-compilando-do-código) |
 

@@ -1,6 +1,6 @@
 [package]
 name = "globalmusic"
-version = "0.6.1"
+version = "0.6.2"
 description = "Player de música global e leve: Spotify, YouTube Music e SoundCloud."
 authors = ["GlobalMusic"]
 edition = "2024"

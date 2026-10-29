@@ -11,6 +11,12 @@
 //! 2. em `src-tauri/binaries/yt-dlp/` (desenvolvimento; `npm run setup:yt-dlp`);
 //! 3. no PATH do sistema.
 //!
+//! **Login e runtime JavaScript.** Com os cookies da pessoa, o yt-dlp usa clientes do YouTube que
+//! exigem um runtime JavaScript (Node, Deno…) para liberar os formatos de áudio. Quem não tem nenhum
+//! instalado recebia "Requested format is not available" em toda faixa; sem login, os clientes
+//! usados não precisam disso. Então, nesse erro, tentamos de novo sem os cookies e seguimos assim
+//! até o app fechar.
+//!
 //! As URLs resolvidas ficam num cache **em disco**, válido até perto do `expire=` que o
 //! próprio YouTube põe na URL (~6 h): uma música tocada há pouco abre rápido mesmo depois
 //! de fechar e abrir o app.
@@ -18,6 +24,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -29,6 +36,8 @@ use crate::error::{Error, Result};
 const TIMEOUT: Duration = Duration::from_secs(40);
 /// m4a (AAC) primeiro; Opus/WebM o symphonia não decodifica.
 const FORMAT: &str = "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[acodec=mp3]";
+/// O que o yt-dlp diz quando nenhum formato de áudio sobrou (ver "Login e runtime JavaScript").
+const FORMAT_MISSING: &str = "Requested format is not available";
 
 /// Margem antes do `expire=` da URL: uma música começada perto do fim ainda termina de baixar.
 const EXPIRY_MARGIN_SECS: u64 = 30 * 60;
@@ -59,6 +68,8 @@ pub struct YtDlp {
     /// ninguém mais espera (a pessoa pulou a faixa), a chamada é descartada e o processo
     /// encerrado (`kill_on_drop`), sem ficar disputando CPU e rede com a faixa nova.
     inflight: Mutex<HashMap<String, WeakShared<BoxFuture<'static, std::result::Result<String, String>>>>>,
+    /// Com login, o áudio não veio (falta runtime JavaScript): as próximas chamadas vão sem cookies.
+    without_cookies: AtomicBool,
 }
 
 fn now_secs() -> u64 {
@@ -86,7 +97,13 @@ impl YtDlp {
         log::info!("yt-dlp: {}", program.display());
         sweep_cookie_files();
         let cache = cache_file.as_deref().map(load_cache).unwrap_or_default();
-        Self { program, cache: Mutex::new(cache), cache_file, inflight: Mutex::new(HashMap::new()) }
+        Self {
+            program,
+            cache: Mutex::new(cache),
+            cache_file,
+            inflight: Mutex::new(HashMap::new()),
+            without_cookies: AtomicBool::new(false),
+        }
     }
 
     /// Esquece a URL guardada (ex.: o download com ela falhou; o IP mudou).
@@ -106,7 +123,16 @@ impl YtDlp {
                 return Ok(cached.url);
             }
         }
-        let url = self.job(video_id, cookies).await.map_err(Error::Other)?;
+        let cookies = cookies.filter(|_| !self.without_cookies.load(Ordering::Relaxed));
+        let url = match self.job(video_id, cookies).await {
+            Err(e) if cookies.is_some() && e.contains(FORMAT_MISSING) => {
+                log::warn!("yt-dlp: com login o áudio não veio (sem runtime JavaScript?); seguindo sem os cookies");
+                self.without_cookies.store(true, Ordering::Relaxed);
+                self.job(video_id, None).await
+            }
+            other => other,
+        }
+        .map_err(Error::Other)?;
         if let Ok(mut cache) = self.cache.lock() {
             let entry = CachedUrl { valid_until: valid_until(&url, now_secs()), url: url.clone() };
             cache.insert(video_id.to_owned(), entry);
@@ -138,11 +164,12 @@ impl YtDlp {
         }
     }
 
-    /// A chamada em andamento para `video_id`, ou uma nova.
+    /// A chamada em andamento para `video_id` (com ou sem login), ou uma nova.
     fn job(&self, video_id: &str, cookies: Option<&str>) -> Job {
+        let key = if cookies.is_some() { video_id.to_owned() } else { format!("{video_id}#anon") };
         let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         inflight.retain(|_, job| job.upgrade().is_some());
-        if let Some(job) = inflight.get(video_id).and_then(WeakShared::upgrade) {
+        if let Some(job) = inflight.get(&key).and_then(WeakShared::upgrade) {
             return job;
         }
         let job = resolve(self.program.clone(), video_id.to_owned(), cookies.map(str::to_owned))
@@ -150,7 +177,7 @@ impl YtDlp {
             .boxed()
             .shared();
         if let Some(weak) = job.downgrade() {
-            inflight.insert(video_id.to_owned(), weak);
+            inflight.insert(key, weak);
         }
         job
     }

@@ -29,6 +29,9 @@ where
         async move {
             match tokio::time::timeout(timeout, call).await {
                 Ok(Ok(items)) => SourceResults::ok(source, items),
+                Ok(Err(e @ Error::RateLimited(secs))) => {
+                    SourceResults { retry_in: Some(secs), ..SourceResults::failed(source, e.to_string()) }
+                }
                 Ok(Err(e)) => SourceResults::failed(source, e.to_string()),
                 Err(_) => SourceResults::failed(source, Error::Timeout.to_string()),
             }

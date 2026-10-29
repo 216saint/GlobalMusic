@@ -567,6 +567,21 @@ macOS exige isso.
 - Instalador em português (`PortugueseBR`), ícone do app e editor/copyright ("GlobalMusic"), que aparecem
   em "Aplicativos instalados" do Windows.
 
+**0.6.2: o primeiro teste num PC de outra pessoa.** Um colega, com Spotify Free, achou três problemas
+que no PC do desenvolvedor não apareciam:
+- **Toda faixa do YouTube pulava** com `yt-dlp: Requested format is not available`. Logado, o yt-dlp usa
+  clientes do YouTube que exigem um runtime JavaScript (Node, Deno…) para liberar os formatos de áudio.
+  O PC do desenvolvedor tem Node instalado, o do colega não. Sem login, os clientes usados não precisam
+  disso (reproduzido aqui escondendo o Node do PATH). Agora, nesse erro, o app tenta de novo sem os cookies
+  e segue assim até fechar (`without_cookies` em `audio/ytdlp.rs`).
+  *Lição:* testar com o PATH de um PC "limpo"; o que o desenvolvedor tem instalado esconde dependências.
+- **Biblioteca vazia com "muitas requisições"** (429). Sem Client ID próprio, todo mundo divide a cota do
+  client oficial do Spotify. Agora a última biblioteca lida fica em disco (`spotify/cache.rs`) e aparece
+  quando o Spotify limita. O erro também passou a levar `retryIn` (os segundos do `Retry-After`), e a
+  interface tenta de novo sozinha quando o prazo acaba, em vez de pedir para a pessoa tentar.
+- **Playlist importada não abria.** O fallback para a página pública da playlist só acontecia com 403.
+  Agora o 429 também cai nele, e a página pública não gasta a cota da Web API.
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 

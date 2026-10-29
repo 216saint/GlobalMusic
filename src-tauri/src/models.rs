@@ -89,15 +89,18 @@ pub struct SourceResults<T> {
     pub source: Source,
     pub items: Vec<T>,
     pub error: Option<String>,
+    /// A fonte pediu para esperar (429): em quantos segundos vale tentar de novo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_in: Option<u64>,
 }
 
 impl<T> SourceResults<T> {
     pub fn ok(source: Source, items: Vec<T>) -> Self {
-        Self { source, items, error: None }
+        Self { source, items, error: None, retry_in: None }
     }
 
     pub fn failed(source: Source, error: impl Into<String>) -> Self {
-        Self { source, items: Vec::new(), error: Some(error.into()) }
+        Self { source, items: Vec::new(), error: Some(error.into()), retry_in: None }
     }
 }
 
