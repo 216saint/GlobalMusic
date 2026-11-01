@@ -109,6 +109,8 @@ let player: PlayerSnapshot = {
   loading: false,
   positionMs: 0,
   volume: 0.8,
+  repeat: "off",
+  shuffle: false,
   version: 0,
 };
 const listeners = new Set<(s: PlayerSnapshot) => void>();
@@ -182,6 +184,7 @@ const commands: Record<string, (args: any) => unknown> = {
       p.id === id ? { ...p, name: name ?? p.name, cover: removeCover ? null : (cover ?? p.cover) } : p,
     )),
   share_local_playlist: ({ id }) => `https://api.globalmusic.216saint.com.br/p/demo${id}`,
+  copy_text: ({ text }) => navigator.clipboard.writeText(text as string),
   import_playlist: ({ link }) => {
     const source: Source = link.includes("spotify") ? "spotify" : link.includes("soundcloud") ? "soundcloud" : "youtube_music";
     imported = [{ id: `imp${imported.length}`, source, name: "Playlist importada", owner: null, trackCount: null, artwork: null }, ...imported];
@@ -230,7 +233,8 @@ const commands: Record<string, (args: any) => unknown> = {
       nowQueued = true;
       return set({ current: queued, upNext, playing: true });
     }
-    const next = (player.contextIndex ?? -1) + 1;
+    let next = (player.contextIndex ?? -1) + 1;
+    if (next >= player.context.length && player.repeat !== "off") next = 0;
     if (next >= player.context.length) {
       restart(false);
       return set({ playing: false });
@@ -240,17 +244,25 @@ const commands: Record<string, (args: any) => unknown> = {
     return set({ contextIndex: next, current: player.context[next], playing: true });
   },
   player_previous: () => {
+    // Mesma regra do `Player::previous`: depois de 2 s, recomeça a música; e sempre toca.
+    if (player.current && position() >= 2000) {
+      restart(true);
+      return set({ playing: true });
+    }
     if (player.contextIndex === null) return player;
     const target = nowQueued ? player.contextIndex : Math.max(0, player.contextIndex - 1);
-    restart(player.playing);
+    restart(true);
     nowQueued = false;
-    return set({ contextIndex: target, current: player.context[target] });
+    return set({ contextIndex: target, current: player.context[target], playing: true });
   },
   player_seek: ({ positionMs }) => {
     restart(player.playing, positionMs);
     return set({});
   },
   player_set_volume: ({ volume }) => set({ volume: Math.min(1, Math.max(0, volume)) }),
+  player_set_repeat: ({ repeat }) => set({ repeat }),
+  // Na demonstração o aleatório só acende o botão (a ordem embaralhada é do `player/queue.rs`).
+  player_set_shuffle: ({ on }) => set({ shuffle: on }),
   player_enqueue: ({ track }) => addToQueue(track, false),
   player_play_next: ({ track }) => addToQueue(track, true),
   player_remove: ({ slot }) => {
@@ -272,6 +284,7 @@ const commands: Record<string, (args: any) => unknown> = {
     ],
     plain: null,
     instrumental: false,
+    source: "LRCLIB",
   }),
   track_alternatives: ({ track }) => ({
     current: "y1",

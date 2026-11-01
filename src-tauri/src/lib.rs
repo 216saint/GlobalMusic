@@ -53,6 +53,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_oauth::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(AppState::new(app.handle()));
@@ -78,6 +79,8 @@ pub fn run() {
             commands::player_next,
             commands::player_previous,
             commands::player_seek,
+            commands::player_set_repeat,
+            commands::player_set_shuffle,
             commands::player_enqueue,
             commands::player_play_next,
             commands::player_remove,
@@ -94,6 +97,7 @@ pub fn run() {
             commands::create_local_playlist,
             commands::edit_local_playlist,
             commands::share_local_playlist,
+            commands::copy_text,
             commands::add_to_local_playlist,
             commands::remove_from_local_playlist,
             commands::delete_local_playlist,

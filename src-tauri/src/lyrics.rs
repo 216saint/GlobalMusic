@@ -1,9 +1,15 @@
-//! Letras sincronizadas pelo LRCLIB (lrclib.net): gratuito, aberto e sem conta.
+//! Letras, de mais de uma fonte, na ordem:
 //!
-//! A letra vem no formato LRC (`[01:23.45] verso`); a UI destaca o verso do momento. Sem versão
-//! sincronizada, mostramos a letra corrida. Guardamos as últimas em memória (poucos KB cada).
+//! 1. **LRCLIB** (lrclib.net): gratuito, aberto e sem conta. É a única com letra **sincronizada**
+//!    (formato LRC, `[01:23.45] verso`): a UI destaca o verso do momento.
+//! 2. **YouTube Music** (aba "Letra" do site, em geral licenciada da Musixmatch): só texto corrido,
+//!    mas cobre muita coisa que o LRCLIB não tem. Quem busca é `commands::lyrics`, porque precisa
+//!    do vídeo equivalente da faixa (ver `Audio::youtube_equivalent`).
+//!
+//! Guardamos as últimas em memória (poucos KB cada), inclusive o "não tem letra".
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +41,19 @@ pub struct Lyrics {
     pub synced: Vec<LyricLine>,
     pub plain: Option<String>,
     pub instrumental: bool,
+    /// De onde veio, para o crédito na tela (ex.: "LRCLIB", "Musixmatch, pelo YouTube Music").
+    pub source: String,
+}
+
+impl Lyrics {
+    /// Letra corrida do YouTube Music. `credit` é o rodapé do site ("Fonte: Musixmatch").
+    pub fn from_youtube(text: String, credit: Option<&str>) -> Self {
+        let source = match credit.map(|c| c.trim_start_matches("Fonte:").trim()).filter(|c| !c.is_empty()) {
+            Some(provider) => format!("{provider}, pelo YouTube Music"),
+            None => "YouTube Music".to_owned(),
+        };
+        Self { synced: Vec::new(), plain: Some(text), instrumental: false, source }
+    }
 }
 
 #[derive(Deserialize)]
@@ -65,6 +84,7 @@ impl Record {
             synced: self.synced_lyrics.as_deref().map(parse_lrc).unwrap_or_default(),
             plain: self.plain_lyrics.filter(|p| !p.trim().is_empty()),
             instrumental: self.instrumental,
+            source: "LRCLIB".to_owned(),
         }
     }
 }
@@ -80,12 +100,25 @@ impl LyricsClient {
         Self { http, recent: Mutex::new(VecDeque::new()) }
     }
 
-    pub async fn get(&self, track: &Track) -> Result<Option<Lyrics>> {
+    /// A letra de `track`: primeiro o LRCLIB; sem nada lá, `fallback` (o YouTube Music).
+    pub async fn get<F, Fut>(&self, track: &Track, fallback: F) -> Result<Option<Lyrics>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Option<Lyrics>>,
+    {
         let key = format!("{}:{}", track.source.key(), track.id);
         if let Some((_, found)) = self.recent.lock().await.iter().find(|(k, _)| *k == key) {
             return Ok(found.clone());
         }
-        let found = self.fetch(track).await?;
+        let found = match self.fetch(track).await {
+            Ok(Some(lyrics)) => Some(lyrics),
+            Ok(None) => fallback().await,
+            Err(e) => {
+                log::warn!("LRCLIB falhou ({e}); tentando a letra do YouTube Music");
+                // As duas falharam: devolve o erro e não guarda (pode ter sido a rede).
+                Some(fallback().await.ok_or(e)?)
+            }
+        };
         let mut recent = self.recent.lock().await;
         recent.push_front((key, found.clone()));
         recent.truncate(REMEMBER);
@@ -93,24 +126,26 @@ impl LyricsClient {
     }
 
     async fn fetch(&self, track: &Track) -> Result<Option<Lyrics>> {
-        let title = clean_title(&track.title);
-        let artist = track.artists.first().map(String::as_str).unwrap_or_default();
         let track_secs = track.duration_ms as f64 / 1000.0;
+        let attempts = queries(track);
         // 1º: busca aberta. Entre as letras de verdade, a de duração mais próxima da faixa.
         // (A busca exata às vezes devolve um registro de teste no lugar da letra.)
-        let results: Vec<Record> = self
-            .request("search")
-            .query(&[("track_name", title.as_str()), ("artist_name", artist)])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        if let Some(best) = pick(results, track_secs) {
-            return Ok(Some(best.into_lyrics()));
+        for (title, artist) in &attempts {
+            let results: Vec<Record> = self
+                .request("search")
+                .query(&[("track_name", title.as_str()), ("artist_name", artist.as_str())])
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if let Some(best) = pick(results, track_secs) {
+                return Ok(Some(best.into_lyrics()));
+            }
         }
         // 2º: busca exata (título + artista + duração).
-        let mut exact = vec![("track_name", title.clone()), ("artist_name", artist.to_owned())];
+        let (title, artist) = &attempts[0];
+        let mut exact = vec![("track_name", title.clone()), ("artist_name", artist.clone())];
         exact.push(("duration", (track.duration_ms / 1000).to_string()));
         let response = self.request("get").query(&exact).send().await?;
         if !response.status().is_success() {
@@ -128,6 +163,21 @@ impl LyricsClient {
 /// A letra de verdade com a duração mais próxima da faixa.
 fn pick(records: Vec<Record>, track_secs: f64) -> Option<Record> {
     records.into_iter().filter(Record::is_real).min_by(|a, b| a.duration_gap(track_secs).total_cmp(&b.duration_gap(track_secs)))
+}
+
+/// Pares (título, artista) para procurar, do mais provável ao menos. Vídeo do YouTube costuma vir
+/// como "Artista - Música" enviado por um canal qualquer: aí vale também o que está em volta do " - ".
+fn queries(track: &Track) -> Vec<(String, String)> {
+    let title = clean_title(&track.title);
+    let artist = track.artists.first().cloned().unwrap_or_default();
+    let mut attempts = vec![(title.clone(), artist)];
+    if let Some((before, after)) = title.split_once(" - ") {
+        let (before, after) = (before.trim(), after.trim());
+        if !before.is_empty() && !after.is_empty() {
+            attempts.push((after.to_owned(), before.to_owned()));
+        }
+    }
+    attempts
 }
 
 /// Títulos do YouTube vêm com "(Official Video)", "[Lyrics]"…: sem isso, a busca acha mais.
@@ -198,6 +248,29 @@ mod tests {
         .unwrap();
         let best = pick(records, 213.0).unwrap().into_lyrics();
         assert_eq!(best.synced.last().unwrap().text, "certa");
+    }
+
+    #[test]
+    fn also_tries_artist_dash_title_uploads() {
+        let track = Track {
+            id: "x".into(),
+            source: crate::models::Source::YoutubeMusic,
+            title: "Racionais MC's - Negro Drama (Clipe Oficial)".into(),
+            artists: vec!["Canal Qualquer".into()],
+            album: None,
+            duration_ms: 0,
+            artwork: None,
+            isrc: None,
+        };
+        let attempts = queries(&track);
+        assert_eq!(attempts[0], ("Racionais MC's - Negro Drama".into(), "Canal Qualquer".into()));
+        assert_eq!(attempts[1], ("Negro Drama".into(), "Racionais MC's".into()));
+    }
+
+    #[test]
+    fn credits_the_youtube_lyrics_provider() {
+        assert_eq!(Lyrics::from_youtube("a".into(), Some("Fonte: Musixmatch")).source, "Musixmatch, pelo YouTube Music");
+        assert_eq!(Lyrics::from_youtube("a".into(), None).source, "YouTube Music");
     }
 
     #[test]

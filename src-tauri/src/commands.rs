@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::models::{AccountStatus, Playlist, Source, SourceResults, Track};
 use crate::player::queue::Slot;
 use crate::player::routing::PlaybackRoute;
-use crate::player::{Player, PlayerSnapshot};
+use crate::player::{Player, PlayerSnapshot, Repeat};
 use crate::state::AppState;
 
 const DEFAULT_SEARCH_LIMIT: u32 = 10;
@@ -191,6 +191,23 @@ pub async fn player_previous(app: AppHandle, state: State<'_, AppState>) -> Resu
     Ok(snapshot)
 }
 
+/// Repetir: desligado, a lista inteira ou só a música atual.
+#[tauri::command]
+pub async fn player_set_repeat(app: AppHandle, state: State<'_, AppState>, repeat: Repeat) -> Result<PlayerSnapshot> {
+    let snapshot = update_player(&app, &state, |p| p.set_repeat(repeat)).await;
+    // No fim da lista, a "próxima" passou a ser a primeira: pré-carrega.
+    preload_upcoming(&app).await;
+    Ok(snapshot)
+}
+
+/// Aleatório: embaralha o resto da lista atual (a música que toca não muda).
+#[tauri::command]
+pub async fn player_set_shuffle(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<PlayerSnapshot> {
+    let snapshot = update_player(&app, &state, |p| p.set_shuffle(on)).await;
+    preload_upcoming(&app).await;
+    Ok(snapshot)
+}
+
 /// "Adicionar à fila": entra no fim da sua fila (de qualquer fonte), antes do resto da playlist.
 #[tauri::command]
 pub async fn player_enqueue(app: AppHandle, state: State<'_, AppState>, track: Track) -> Result<PlayerSnapshot> {
@@ -305,6 +322,15 @@ pub async fn share_local_playlist(state: State<'_, AppState>, id: String) -> Res
     Ok(state.social.share_playlist(&shared).await?.url)
 }
 
+/// Copia `text` para a área de transferência do sistema. Pelo Rust e não pelo `navigator.clipboard`:
+/// na WebView, a cópia feita depois de um `await` (ex.: esperar o servidor devolver o link) é
+/// recusada, porque o clique da pessoa "já passou".
+#[tauri::command]
+pub fn copy_text(app: AppHandle, text: String) -> Result<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| Error::Other(format!("não consegui copiar: {e}")))
+}
+
 #[tauri::command]
 pub async fn remove_imported_playlist(state: State<'_, AppState>, source: Source, id: String) -> Result<Vec<Playlist>> {
     Ok(state.imports.remove(source, &id).await)
@@ -350,10 +376,26 @@ pub async fn delete_local_playlist(state: State<'_, AppState>, id: String) -> Re
     state.local_playlists.delete(&id)
 }
 
-/// Letra da faixa (LRCLIB): sincronizada quando existir, senão corrida.
+/// Letra da faixa: do LRCLIB (sincronizada quando existir) ou, sem nada lá, do YouTube Music.
 #[tauri::command]
 pub async fn lyrics(state: State<'_, AppState>, track: Track) -> Result<Option<Lyrics>> {
-    state.lyrics.get(&track).await
+    state.lyrics.get(&track, || youtube_lyrics(&state, &track)).await
+}
+
+/// A letra do YouTube Music: do próprio vídeo ou, para Spotify e SoundCloud, do vídeo equivalente
+/// (o mesmo que o player usa quando toca a faixa pelo YouTube).
+async fn youtube_lyrics(state: &AppState, track: &Track) -> Option<Lyrics> {
+    let video_id = match track.source {
+        Source::YoutubeMusic => track.id.clone(),
+        _ => state.audio.youtube_equivalent(track).await.ok()?,
+    };
+    match state.providers.youtube.lyrics(&video_id).await {
+        Ok(found) => found.map(|(text, credit)| Lyrics::from_youtube(text, credit.as_deref())),
+        Err(e) => {
+            log::warn!("letra do YouTube Music falhou para \"{}\": {e}", track.title);
+            None
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -409,7 +451,7 @@ pub async fn on_audio_event(app: &AppHandle, event: AudioEvent) {
     }
     match event {
         AudioEvent::Ended(_) => {
-            let snapshot = update_player(app, &state, Player::next).await;
+            let snapshot = update_player(app, &state, Player::finished).await;
             start_current(app, &snapshot).await;
         }
         // O Spotify recusou esta faixa: em vez de pular, tenta a mesma música pelo YouTube.

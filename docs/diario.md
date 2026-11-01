@@ -582,6 +582,46 @@ que no PC do desenvolvedor não apareciam:
 - **Playlist importada não abria.** O fallback para a página pública da playlist só acontecia com 403.
   Agora o 429 também cai nele, e a página pública não gasta a cota da Web API.
 
+**0.6.3: Spotify Free de verdade.** Na prática, a Web API pelo client compartilhado respondia 429
+sempre: conta Free não conseguia nem ver as playlists. A conexão passou a ser pelo site, e o token
+das leituras vem do player web, aberto numa janela invisível. O porquê, o funcionamento e os riscos
+estão no ADR 0003, seção "0.6.3".
+- *Detalhe técnico:* a página externa não pode chamar comandos do Tauri (nem deve). O canal escolhido
+  foi o **título da janela**: o script muda o título para `GMTOKEN {...}`, e o Rust escuta com
+  `on_document_title_changed`.
+- **Copiar link não funcionava.** O `navigator.clipboard` da WebView recusa a cópia feita depois de um
+  `await`, porque o clique da pessoa "já passou". Agora a cópia é feita pelo Rust
+  (`tauri-plugin-clipboard-manager`, comando `copy_text`).
+
+**Aleatório, repetir e letra de mais fontes** (pedido depois do teste com colegas):
+- **Repetir** tem três estados, na ordem do Spotify: desligado → a lista → só esta música. "Repetir
+  uma" só age quando a faixa **acaba sozinha** (`Player::finished`, chamado no `AudioEvent::Ended`).
+  Apertar "próxima" ainda pula: senão o botão ficaria inútil. Com repetição, `peek_ahead` inclui o
+  começo da lista depois do fim, para a primeira faixa já estar pré-carregada quando a lista der a volta.
+- **Aleatório** reordena o próprio contexto (a atual no topo, o resto embaralhado com `rand`) e guarda
+  a ordem original em `Queue::original`. *Por que assim:* a fila na tela e o "pular até" usam índices
+  do contexto. Embaralhando a lista de verdade, eles continuam certos sem nenhuma mudança na UI, e a
+  fila mostra a ordem real em que as músicas vão tocar. Tirar uma faixa com o aleatório ligado também a
+  tira da ordem original, para ela não voltar ao desligar.
+- Os dois modos ficam no `localStorage` (`globalmusic.playMode`) e são reaplicados ao abrir o app.
+- **Letra:** o LRCLIB continua primeiro, porque é a única fonte com letra sincronizada. Sem nada lá,
+  entra a aba "Letra" do YouTube Music (InnerTube `next` → id `MPLYt…` → `browse`), que funciona sem
+  login e em geral vem da Musixmatch. Para faixas do Spotify e do SoundCloud, usamos o vídeo
+  equivalente que o player já usa (`Audio::youtube_equivalent`). A tela mostra o crédito ("Letra:
+  LRCLIB" ou "Letra: Musixmatch, pelo YouTube Music").
+- Títulos do YouTube no formato "Artista - Música", enviados por um canal qualquer, agora também são
+  procurados no LRCLIB como (Música, Artista).
+
+**"Anterior" (botão e tecla de mídia):**
+- **Regra nova:** depois de 2 s de música (`RESTART_AFTER_MS`), recomeça a mesma; antes disso, vai para a anterior.
+- **Bug:** ouvir a lista até o fim e apertar "anterior" não tocava nada; só trocando de música e
+  voltando. *Causa:* no fim da lista o player parava e **zerava o relógio**, e o `previous` herdava o
+  estado "parado": trocava a faixa selecionada, e o `start_current`, vendo `playing = false`,
+  parava o áudio.
+- *Correção:* no fim da lista, a última faixa fica parada **no fim** (`Player::stop_at_end`, flag
+  `ended`). Assim, "anterior" cai na regra dos 2 s e recomeça a música que acabou de tocar. "Anterior"
+  agora sempre toca, e "tocar" depois do fim começa do zero (em vez de retomar do fim e acabar na hora).
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 

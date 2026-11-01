@@ -1,6 +1,6 @@
 [package]
 name = "globalmusic"
-version = "0.6.2"
+version = "0.6.4"
 description = "Player de música global e leve: Spotify, YouTube Music e SoundCloud."
 authors = ["GlobalMusic"]
 edition = "2024"
@@ -61,6 +61,7 @@ discord-rich-presence = "1"
 # --- Áudio (YouTube Music / SoundCloud / fallback do Spotify Free) ---
 # Symphonia não decodifica Opus: no YouTube pedimos o formato m4a/AAC (itag 140).
 rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "mp4", "vorbis", "flac", "wav"] }
+tauri-plugin-clipboard-manager = "2"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
 

@@ -5,9 +5,19 @@
   import Pause from "@lucide/svelte/icons/pause";
   import Volume1 from "@lucide/svelte/icons/volume-1";
   import MicVocal from "@lucide/svelte/icons/mic-vocal";
+  import Shuffle from "@lucide/svelte/icons/shuffle";
+  import Repeat from "@lucide/svelte/icons/repeat";
+  import Repeat1 from "@lucide/svelte/icons/repeat-1";
   import { api } from "$lib/api";
   import { app } from "$lib/app.svelte";
-  import { SOURCE_LABEL } from "$lib/types";
+  import { SOURCE_LABEL, type Repeat as RepeatMode } from "$lib/types";
+
+  /** O que o botão faz agora (o próximo clique avança: desligado → lista → esta música). */
+  const REPEAT_LABEL: Record<RepeatMode, string> = {
+    off: "Repetir",
+    all: "Repetindo a lista",
+    one: "Repetindo esta música",
+  };
   import Artwork from "./Artwork.svelte";
   import Bars from "./Bars.svelte";
   import LyricsView from "./LyricsView.svelte";
@@ -51,6 +61,16 @@
     </div>
 
     <div class="controls">
+      <button
+        class="mode"
+        class:on={app.player.shuffle}
+        aria-pressed={app.player.shuffle}
+        aria-label="Aleatório"
+        title={app.player.shuffle ? "Aleatório: ligado" : "Aleatório"}
+        onclick={() => app.toggleShuffle()}
+      >
+        <Shuffle size={19} strokeWidth={1.6} />
+      </button>
       <button aria-label="Anterior" onclick={() => api.previous()}><SkipBack size={24} strokeWidth={1.5} /></button>
       <button class="main" aria-label={app.player.playing ? "Pausar" : "Tocar"} onclick={() => api.toggle()}>
         {#if app.player.playing}
@@ -60,6 +80,19 @@
         {/if}
       </button>
       <button aria-label="Próxima" onclick={() => api.next()}><SkipForward size={24} strokeWidth={1.5} /></button>
+      <button
+        class="mode"
+        class:on={app.player.repeat !== "off"}
+        aria-label={REPEAT_LABEL[app.player.repeat]}
+        title={REPEAT_LABEL[app.player.repeat]}
+        onclick={() => app.cycleRepeat()}
+      >
+        {#if app.player.repeat === "one"}
+          <Repeat1 size={19} strokeWidth={1.6} />
+        {:else}
+          <Repeat size={19} strokeWidth={1.6} />
+        {/if}
+      </button>
     </div>
 
     <div class="volume">
@@ -167,7 +200,7 @@
   .controls {
     display: flex;
     align-items: center;
-    gap: 36px;
+    gap: 30px;
   }
 
   .controls button {
@@ -184,6 +217,28 @@
 
   .controls .main {
     color: var(--ink);
+  }
+
+  /* Aleatório e repetir: mais discretos que os de navegação; ligados, ganham cor e um ponto embaixo. */
+  .controls .mode {
+    position: relative;
+    color: var(--ink-3);
+  }
+
+  .controls .mode.on {
+    color: var(--violet-bright);
+  }
+
+  .controls .mode.on::after {
+    content: "";
+    position: absolute;
+    bottom: -3px;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: currentColor;
   }
 
   .volume {

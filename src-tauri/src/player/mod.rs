@@ -19,11 +19,14 @@ use serde::Serialize;
 
 use crate::models::Track;
 use clock::PlaybackClock;
+pub use queue::Repeat;
 use queue::{Queue, Slot};
 use routing::{route_for, PlaybackRoute};
 
 /// Quantas faixas seguidas podem falhar antes de o player desistir (em vez de varrer a fila inteira).
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// "Anterior" depois disso recomeça a música; antes, vai para a anterior (como no Spotify).
+pub const RESTART_AFTER_MS: u64 = 2_000;
 
 #[derive(Debug)]
 pub struct Player {
@@ -36,6 +39,9 @@ pub struct Player {
     volume: f32,
     spotify_premium: bool,
     consecutive_failures: u32,
+    /// A lista acabou: a última faixa fica parada **no fim** (e não no zero), para "anterior"
+    /// recomeçá-la e "tocar" começar de novo do zero.
+    ended: bool,
     /// Sobe a cada mudança (ver `touch`). Vai no snapshot para a UI descartar um snapshot velho
     /// que chegue depois de um mais novo.
     version: u64,
@@ -51,6 +57,7 @@ impl Default for Player {
             volume: 0.8,
             spotify_premium: false,
             consecutive_failures: 0,
+            ended: false,
             version: 0,
         }
     }
@@ -74,6 +81,8 @@ pub struct PlayerSnapshot {
     /// Posição no instante em que o snapshot foi tirado.
     pub position_ms: u64,
     pub volume: f32,
+    pub repeat: Repeat,
+    pub shuffle: bool,
     /// Ordem dos snapshots: a resposta de um comando pode chegar à UI **depois** do evento de uma
     /// mudança posterior. Ex.: o "tocar" responde "carregando", mas a música veio do cache e o
     /// evento "começou" chegou antes; sem isso, a resposta atrasada deixava a UI em "Carregando…".
@@ -102,6 +111,8 @@ impl Player {
             loading: self.loading,
             position_ms: self.clock.position_ms(Instant::now(), duration),
             volume: self.volume,
+            repeat: self.queue.repeat,
+            shuffle: self.queue.shuffled(),
             version: self.version,
         }
     }
@@ -134,19 +145,48 @@ impl Player {
         } else if self.clock.is_running() {
             self.clock.pause(now);
         } else if self.queue.current().is_some() {
+            if self.ended {
+                // Tocar depois que a lista acabou: a última música recomeça.
+                self.restart_track(false);
+            }
             self.clock.resume(now);
         }
     }
 
     pub fn next(&mut self) {
-        let has_next = self.queue.next().is_some();
-        self.restart_track(has_next);
+        if self.queue.next().is_some() {
+            self.restart_track(true);
+        } else {
+            self.stop_at_end();
+        }
     }
 
+    /// A faixa acabou sozinha: com "repetir uma", ela recomeça; senão, segue a fila.
+    pub fn finished(&mut self) {
+        if self.queue.repeat == Repeat::One && self.queue.current().is_some() {
+            self.restart_track(true);
+        } else {
+            self.next();
+        }
+    }
+
+    pub fn set_repeat(&mut self, repeat: Repeat) {
+        self.queue.repeat = repeat;
+    }
+
+    pub fn set_shuffle(&mut self, on: bool) {
+        self.queue.set_shuffle(on);
+    }
+
+    /// "Anterior" (botão ou tecla de mídia): depois de `RESTART_AFTER_MS` de música, volta ao começo
+    /// dela; antes disso, vai para a faixa anterior. Sempre toca, como no Spotify. (Antes herdava o
+    /// estado: com a lista já acabada, trocava a faixa mas ficava mudo.)
     pub fn previous(&mut self) {
-        let playing = self.clock.is_running() || self.loading;
-        self.queue.previous();
-        self.restart_track(playing);
+        let duration = self.queue.current().map_or(0, |t| t.duration_ms);
+        if self.clock.position_ms(Instant::now(), duration) < RESTART_AFTER_MS {
+            self.queue.previous();
+        }
+        self.restart_track(self.queue.current().is_some());
     }
 
     /// Adiciona ao fim da sua fila. Devolve `true` se nada tocava e ela começou a tocar.
@@ -195,6 +235,7 @@ impl Player {
 
     pub fn seek(&mut self, position_ms: u64) {
         let duration = self.queue.current().map_or(0, |t| t.duration_ms);
+        self.ended = false;
         self.clock.seek(position_ms.min(duration), Instant::now());
     }
 
@@ -232,6 +273,15 @@ impl Player {
     fn restart_track(&mut self, play: bool) {
         self.clock = PlaybackClock::default();
         self.loading = play;
+        self.ended = false;
+    }
+
+    /// Não há próxima: para, com a última faixa marcando o fim.
+    fn stop_at_end(&mut self) {
+        let duration = self.queue.current().map_or(0, |t| t.duration_ms);
+        self.restart_track(false);
+        self.clock.seek(duration, Instant::now());
+        self.ended = true;
     }
 }
 
@@ -284,6 +334,76 @@ mod tests {
         assert!(p.failed());
         assert!(!p.failed(), "a terceira falha seguida para o player");
         assert!(!p.snapshot().playing);
+    }
+
+    #[test]
+    fn repeat_one_replays_on_end_but_next_still_skips() {
+        let mut p = Player::default();
+        p.play_queue(queue(3), 0, None);
+        p.set_repeat(Repeat::One);
+        p.started(0);
+        p.finished();
+        let s = p.snapshot();
+        assert_eq!(s.current.unwrap().id, "0", "acabou sozinha: recomeça");
+        assert!(s.loading && s.position_ms == 0);
+        p.next();
+        assert_eq!(p.snapshot().current.unwrap().id, "1", "a pessoa pulou: avança");
+    }
+
+    #[test]
+    fn without_repeat_the_end_of_the_list_stops() {
+        let mut p = Player::default();
+        p.play_queue(queue(1), 0, None);
+        p.started(0);
+        p.finished();
+        assert!(!p.snapshot().playing);
+    }
+
+    #[test]
+    fn previous_restarts_the_song_after_two_seconds() {
+        let mut p = Player::default();
+        p.play_queue(queue(3), 1, None);
+        p.started(5_000);
+        p.previous();
+        let s = p.snapshot();
+        assert_eq!(s.current.unwrap().id, "1", "passou de 2 s: recomeça a mesma");
+        assert!(s.loading && s.position_ms == 0);
+
+        p.started(0);
+        p.previous();
+        assert_eq!(p.snapshot().current.unwrap().id, "0", "no começo: vai para a anterior");
+    }
+
+    #[test]
+    fn after_the_list_ends_previous_and_play_replay_the_last_song() {
+        let mut p = Player::default();
+        p.play_queue(queue(2), 1, None);
+        p.started(0);
+        p.finished();
+        let s = p.snapshot();
+        assert!(!s.playing);
+        assert_eq!(s.position_ms, 100_000, "parada no fim, não no zero");
+
+        p.previous();
+        let s = p.snapshot();
+        assert_eq!(s.current.unwrap().id, "1", "recomeça a que acabou de tocar");
+        assert!(s.playing, "e toca (antes ficava mudo)");
+
+        p.started(0);
+        p.finished();
+        p.toggle();
+        let s = p.snapshot();
+        assert!(s.playing && s.position_ms < 1_000, "tocar depois do fim começa do zero");
+    }
+
+    #[test]
+    fn previous_plays_even_when_paused() {
+        let mut p = Player::default();
+        p.play_queue(queue(2), 1, None);
+        p.started(0);
+        p.toggle();
+        p.previous();
+        assert!(p.snapshot().playing);
     }
 
     #[test]

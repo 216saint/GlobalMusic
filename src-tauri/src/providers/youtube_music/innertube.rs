@@ -64,6 +64,25 @@ pub fn parse_playlists(response: &Value) -> Vec<Playlist> {
     items.into_iter().filter_map(parse_playlist).collect()
 }
 
+/// Na resposta de `next` (a tela "tocando agora" do site), o id da aba "Letra" (`MPLYt…`).
+/// Música sem letra não tem essa aba.
+pub fn lyrics_browse_id(next: &Value) -> Option<String> {
+    let mut ids = Vec::new();
+    collect(next, "browseId", &mut ids);
+    ids.into_iter().filter_map(Value::as_str).find(|id| id.starts_with("MPLY")).map(str::to_owned)
+}
+
+/// A letra (texto corrido) e o crédito ("Fonte: Musixmatch") da aba "Letra".
+pub fn parse_lyrics(browse: &Value) -> Option<(String, Option<String>)> {
+    let mut shelves = Vec::new();
+    collect(browse, "musicDescriptionShelfRenderer", &mut shelves);
+    let shelf = shelves.first()?;
+    let text: String = runs(&shelf["description"]).iter().map(|r| r.text).collect();
+    let credit: String = runs(&shelf["footer"]).iter().map(|r| r.text).collect();
+    let text = text.trim();
+    (!text.is_empty()).then(|| (text.to_owned(), Some(credit.trim().to_owned()).filter(|c| !c.is_empty())))
+}
+
 /// Junta, em ordem, todo objeto que aparece sob a chave `key` em qualquer profundidade.
 fn collect<'a>(value: &'a Value, key: &str, out: &mut Vec<&'a Value>) {
     match value {
@@ -280,6 +299,25 @@ mod tests {
         assert_eq!(playlists[0].id, "PLabc123");
         assert_eq!(playlists[0].owner.as_deref(), Some("Você"));
         assert_eq!(playlists[0].track_count, Some(58));
+    }
+
+    /// Formato real das respostas de `next` e `browse` (2026-10-29), enxugado.
+    #[test]
+    fn finds_and_parses_the_lyrics_tab() {
+        let next = json!({ "contents": { "tabs": [
+            { "tabRenderer": { "endpoint": { "browseEndpoint": { "browseId": "FEmusic_queue" } } } },
+            { "tabRenderer": { "endpoint": { "browseEndpoint": { "browseId": "MPLYt_wUbiMNbaE6O" } } } }
+        ]}});
+        assert_eq!(lyrics_browse_id(&next).as_deref(), Some("MPLYt_wUbiMNbaE6O"));
+        assert_eq!(lyrics_browse_id(&json!({ "contents": {} })), None, "sem aba de letra");
+
+        let browse = json!({ "contents": { "sectionListRenderer": { "contents": [{ "musicDescriptionShelfRenderer": {
+            "description": { "runs": [{ "text": "Primeiro verso\nSegundo verso\n" }] },
+            "footer": { "runs": [{ "text": "Fonte: Musixmatch" }] }
+        }}]}}});
+        let (text, credit) = parse_lyrics(&browse).unwrap();
+        assert_eq!(text, "Primeiro verso\nSegundo verso");
+        assert_eq!(credit.as_deref(), Some("Fonte: Musixmatch"));
     }
 
     #[test]

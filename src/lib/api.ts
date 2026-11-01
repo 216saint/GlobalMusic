@@ -18,6 +18,7 @@ import type {
   Playlist,
   PublicUser,
   QueueSlot,
+  Repeat,
   Source,
   SourceResults,
   Track,
@@ -69,6 +70,7 @@ export const api = {
     call<LocalPlaylist[]>("edit_local_playlist", { id, ...changes }),
   /** Guarda uma cópia no servidor do GlobalMusic e devolve o link (precisa da conta GlobalMusic). */
   shareLocalPlaylist: (id: string) => call<string>("share_local_playlist", { id }),
+  copyText: (text: string) => call<void>("copy_text", { text }),
   playlistTracks: (source: Source, playlistId: string) => call<Track[]>("playlist_tracks", { source, playlistId }),
 
   accounts: () => call<AccountStatus[]>("accounts"),
@@ -96,12 +98,14 @@ export const api = {
   /** Curte no GlobalMusic e no serviço de origem; `remoteError` se o serviço recusou. */
   setFavorite: (track: Track, liked: boolean) => call<FavoriteResult>("set_favorite", { track, liked }),
   setVolume: (volume: number) => call<PlayerSnapshot>("player_set_volume", { volume }),
+  setRepeat: (repeat: Repeat) => call<PlayerSnapshot>("player_set_repeat", { repeat }),
+  setShuffle: (on: boolean) => call<PlayerSnapshot>("player_set_shuffle", { on }),
 
   onPlayerState: async (cb: (snapshot: PlayerSnapshot) => void) => (await getBackend()).onPlayer(cb),
   onPlayerError: async (cb: (message: string) => void) => (await getBackend()).onPlayerError(cb),
   onPlayerNotice: async (cb: (message: string) => void) => (await getBackend()).onPlayerNotice(cb),
 
-  /** Letra pelo LRCLIB; `null` se não houver. */
+  /** Letra pelo LRCLIB ou, sem nada lá, pelo YouTube Music; `null` se não houver em nenhum. */
   lyrics: (track: Track) => call<Lyrics | null>("lyrics", { track }),
   /** Versões no YouTube de uma faixa do Spotify (para corrigir uma equivalência errada). */
   trackAlternatives: (track: Track) => call<Alternatives>("track_alternatives", { track }),

@@ -6,12 +6,29 @@
 //!   Toca **antes** do resto do contexto, na ordem; depois o contexto continua de onde parou.
 //!
 //! Antes era uma lista só, e "Adicionar à fila" colocava a música no fim da playlist.
+//!
+//! **Aleatório** reordena o próprio contexto (a atual no topo, o resto embaralhado) e guarda a
+//! ordem original para quando desligar. Assim a fila na tela já mostra a ordem em que vai tocar.
+//! **Repetir** vale para o contexto: "todas" volta ao começo no fim da lista; "uma" repete a atual
+//! quando ela acaba sozinha (ver `Player::finished`). Pular com "próxima" ainda avança.
 
 use std::collections::VecDeque;
 
-use serde::Deserialize;
+use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 use crate::models::Track;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Repeat {
+    #[default]
+    Off,
+    /// A lista inteira, em volta.
+    All,
+    /// A música atual, até a pessoa pular.
+    One,
+}
 
 /// Endereço de uma faixa que ainda vai tocar (tirar da fila, pular até ela).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -31,6 +48,9 @@ pub struct Queue {
     now: Option<Track>,
     /// A atual veio da sua fila (e não do contexto).
     now_queued: bool,
+    pub repeat: Repeat,
+    /// Com o aleatório ligado: o contexto na ordem original (para voltar a ela ao desligar).
+    original: Option<Vec<Track>>,
 }
 
 impl Queue {
@@ -40,6 +60,36 @@ impl Queue {
         self.now = self.position.map(|i| tracks[i].clone());
         self.now_queued = false;
         self.context = tracks;
+        if self.original.is_some() {
+            self.original = None;
+            self.set_shuffle(true);
+        }
+    }
+
+    pub fn shuffled(&self) -> bool {
+        self.original.is_some()
+    }
+
+    /// Liga: a faixa do contexto em que estamos vai para o topo e o resto é embaralhado.
+    /// Desliga: volta à ordem original, continuando da mesma faixa.
+    pub fn set_shuffle(&mut self, on: bool) {
+        match (on, self.original.take()) {
+            (true, None) => {
+                self.original = Some(self.context.clone());
+                let anchor = self.position.map(|p| self.context.remove(p));
+                self.context.shuffle(&mut rand::rng());
+                if let Some(track) = anchor {
+                    self.context.insert(0, track);
+                    self.position = Some(0);
+                }
+            }
+            (false, Some(original)) => {
+                let anchor = self.position.and_then(|p| self.context.get(p));
+                self.position = anchor.and_then(|a| original.iter().position(|t| same(t, a))).or(self.position.map(|_| 0));
+                self.context = original;
+            }
+            (_, unchanged) => self.original = unchanged,
+        }
     }
 
     pub fn current(&self) -> Option<&Track> {
@@ -58,14 +108,18 @@ impl Queue {
         self.queued.iter()
     }
 
-    /// Avança: primeiro a sua fila, depois o contexto. No fim de tudo devolve `None`.
+    /// Avança: primeiro a sua fila, depois o contexto. No fim de tudo devolve `None`
+    /// (com repetição ligada, o contexto recomeça).
     pub fn next(&mut self) -> Option<&Track> {
         if let Some(track) = self.queued.pop_front() {
             self.now = Some(track);
             self.now_queued = true;
             return self.now.as_ref();
         }
-        let next = self.position.map_or(0, |p| p + 1);
+        let mut next = self.position.map_or(0, |p| p + 1);
+        if next >= self.context.len() && self.repeat != Repeat::Off {
+            next = 0;
+        }
         let track = self.context.get(next)?.clone();
         self.position = Some(next);
         self.now = Some(track);
@@ -74,19 +128,26 @@ impl Queue {
     }
 
     /// Volta uma faixa do contexto. Saindo de uma faixa da sua fila, volta para onde o contexto estava.
+    /// Na primeira, com repetição ligada, vai para a última.
     pub fn previous(&mut self) -> Option<&Track> {
         let position = self.position?;
-        let target = if self.now_queued { position } else { position.saturating_sub(1) };
+        let target = match (self.now_queued, position) {
+            (true, p) => p,
+            (false, 0) if self.repeat != Repeat::Off => self.context.len().saturating_sub(1),
+            (false, p) => p.saturating_sub(1),
+        };
         self.position = Some(target);
         self.now = self.context.get(target).cloned();
         self.now_queued = false;
         self.now.as_ref()
     }
 
-    /// As próximas `n` faixas (sua fila, depois o contexto), sem andar.
+    /// As próximas `n` faixas (sua fila, depois o contexto), sem andar. Com repetição, o começo da
+    /// lista vem depois do fim (para pré-carregar a volta).
     pub fn peek_ahead(&self, n: usize) -> Vec<Track> {
         let rest = self.position.map_or(0, |p| p + 1);
-        self.queued.iter().chain(self.context.iter().skip(rest)).take(n).cloned().collect()
+        let wrap = if self.repeat == Repeat::Off { 0 } else { rest.min(self.context.len()) };
+        self.queued.iter().chain(self.context.iter().skip(rest)).chain(self.context.iter().take(wrap)).take(n).cloned().collect()
     }
 
     /// "Adicionar à fila": entra no fim da **sua fila** (antes do resto do contexto).
@@ -111,7 +172,12 @@ impl Queue {
                 if i >= self.context.len() || is_current {
                     return false;
                 }
-                self.context.remove(i);
+                let removed = self.context.remove(i);
+                if let Some(original) = &mut self.original {
+                    if let Some(at) = original.iter().position(|t| same(t, &removed)) {
+                        original.remove(at);
+                    }
+                }
                 if let Some(p) = self.position.filter(|&p| p > i) {
                     self.position = Some(p - 1);
                 }
@@ -147,6 +213,10 @@ impl Queue {
         self.now_queued = true;
         true
     }
+}
+
+fn same(a: &Track, b: &Track) -> bool {
+    a.source == b.source && a.id == b.id
 }
 
 #[cfg(test)]
@@ -264,6 +334,61 @@ mod tests {
         assert!(q.jump(Slot::Context(2)));
         assert_eq!(q.current().unwrap().id, "d");
         assert!(!q.jump(Slot::Context(9)));
+    }
+
+    #[test]
+    fn repeat_all_wraps_around_both_ways() {
+        let mut q = Queue::default();
+        q.repeat = Repeat::All;
+        q.replace(playlist(&["a", "b"]), 1);
+        assert_eq!(ids(&q.peek_ahead(5)), ["a", "b"], "pré-carrega a volta");
+        assert_eq!(q.next().unwrap().id, "a", "no fim, volta ao começo");
+        assert_eq!(q.previous().unwrap().id, "b", "no começo, vai para o fim");
+    }
+
+    #[test]
+    fn shuffle_keeps_the_current_first_and_restores_the_order() {
+        let mut q = Queue::default();
+        let order: Vec<String> = (0..30).map(|i| i.to_string()).collect();
+        let names: Vec<&str> = order.iter().map(String::as_str).collect();
+        q.replace(playlist(&names), 7);
+
+        q.set_shuffle(true);
+        assert!(q.shuffled());
+        assert_eq!(q.position(), Some(0));
+        assert_eq!(q.current().unwrap().id, "7", "a atual não muda");
+        assert_eq!(q.context()[0].id, "7");
+        let mut sorted = ids(q.context()).iter().map(|id| id.parse::<u32>().unwrap()).collect::<Vec<_>>();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..30).collect::<Vec<_>>(), "mesmas faixas, sem perder nem repetir");
+
+        q.next();
+        let playing = q.current().unwrap().id.clone();
+        q.set_shuffle(false);
+        assert_eq!(ids(q.context()), names, "volta à ordem original");
+        assert_eq!(q.context()[q.position().unwrap()].id, playing, "continua da mesma faixa");
+    }
+
+    #[test]
+    fn a_new_playlist_starts_shuffled_from_the_chosen_track() {
+        let mut q = Queue::default();
+        q.set_shuffle(true);
+        q.replace(playlist(&["a", "b", "c", "d"]), 2);
+        assert!(q.shuffled());
+        assert_eq!(q.context()[0].id, "c");
+        assert_eq!(q.position(), Some(0));
+    }
+
+    #[test]
+    fn removing_while_shuffled_also_leaves_the_original_order() {
+        let mut q = Queue::default();
+        q.replace(playlist(&["a", "b", "c"]), 0);
+        q.set_shuffle(true);
+        let gone = q.context()[1].id.clone();
+        assert!(q.remove(Slot::Context(1)));
+        q.set_shuffle(false);
+        assert_eq!(q.context().len(), 2);
+        assert!(q.context().iter().all(|t| t.id != gone));
     }
 
     #[test]

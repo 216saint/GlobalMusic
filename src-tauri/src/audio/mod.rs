@@ -453,7 +453,7 @@ impl Audio {
     }
 
     /// videoId da mesma gravação no YouTube (com cache por faixa do Spotify).
-    async fn youtube_equivalent(&self, track: &Track) -> Result<String> {
+    pub async fn youtube_equivalent(&self, track: &Track) -> Result<String> {
         let key = match_key(track);
         if let Some(id) = self.matches.get(&key) {
             return Ok(id);

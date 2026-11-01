@@ -106,6 +106,9 @@ export interface UpdateProgress {
   total: number | null;
 }
 
+/** Repetir: nada, a lista inteira ou só a música atual (`player/queue.rs`). */
+export type Repeat = "off" | "all" | "one";
+
 export interface PlayerSnapshot {
   current: Track | null;
   route: PlaybackRoute | null;
@@ -122,11 +125,13 @@ export interface PlayerSnapshot {
   /** Posição no instante do snapshot; a UI avança localmente a partir daqui. */
   positionMs: number;
   volume: number;
+  repeat: Repeat;
+  shuffle: boolean;
   /** Ordem dos snapshots: um mais velho que o atual é descartado (chegou atrasado). */
   version: number;
 }
 
-// Letras (LRCLIB) e versões no YouTube: espelho de `lyrics.rs` e `commands.rs`.
+// Letras (LRCLIB ou YouTube Music) e versões no YouTube: espelho de `lyrics.rs` e `commands.rs`.
 
 export interface LyricLine {
   timeMs: number;
@@ -138,6 +143,8 @@ export interface Lyrics {
   synced: LyricLine[];
   plain: string | null;
   instrumental: boolean;
+  /** Crédito: "LRCLIB", "Musixmatch, pelo YouTube Music"… */
+  source: string;
 }
 
 export interface Alternatives {

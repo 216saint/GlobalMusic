@@ -11,16 +11,19 @@
 //!
 //! - `client_id`: auto-atualização do client ID (ver ADR 0003);
 //! - `http`: requisições com tratamento de 429 (Retry-After);
-//! - `cache`: última cópia da biblioteca, mostrada quando o Spotify limita (429).
+//! - `cache`: última cópia da biblioteca, mostrada quando o Spotify limita (429);
+//! - `web_session`: conta conectada pelo site, cujo token tem cota própria (contas Free).
 
 mod api;
 mod cache;
+mod web_session;
 mod client_id;
 mod http;
 
 pub use client_id::ClientId;
 
 use cache::LibraryCache;
+use web_session::WebSession;
 
 use serde::de::DeserializeOwned;
 
@@ -80,11 +83,49 @@ pub struct SpotifyProvider {
     /// Último `/me` bem-sucedido e quando foi lido.
     profile: Mutex<Option<(Instant, AccountStatus)>>,
     library: LibraryCache,
+    /// Login pelo site: é dele o token das leituras (biblioteca, busca, curtidas).
+    web: WebSession,
 }
 
 impl SpotifyProvider {
-    pub fn new(store: TokenStore, http: reqwest::Client, client_id: Arc<ClientId>, library_dir: Option<PathBuf>) -> Self {
-        Self { store, http, client_id, profile: Mutex::new(None), library: LibraryCache::new(library_dir) }
+    pub fn new(
+        app: AppHandle,
+        store: TokenStore,
+        http: reqwest::Client,
+        client_id: Arc<ClientId>,
+        library_dir: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            store,
+            http,
+            client_id,
+            profile: Mutex::new(None),
+            library: LibraryCache::new(library_dir),
+            web: WebSession::new(app),
+        }
+    }
+
+    /// Há token OAuth guardado (login pelo navegador, usado pelo librespot)?
+    fn has_oauth(&self) -> bool {
+        matches!(self.store.load_as(Source::Spotify.key()), Ok(Some(_)))
+    }
+
+    /// Login OAuth pelo navegador: é o token que o librespot aceita para tocar (Premium).
+    async fn connect_oauth(&self, app: &AppHandle) -> Result<()> {
+        // Garante o client ID mais recente antes de abrir o navegador (no máximo 1x por dia).
+        let _ = self.client_id.refresh_if_stale().await;
+        let tokens = self.authorize(app, &self.client_id.get(), SCOPES).await?;
+        self.store.save(Source::Spotify, &tokens)?;
+        // Client ID próprio: um segundo login, com o client oficial, só para tocar. O navegador
+        // já está logado no Spotify, então costuma ser só um "Concordo" (e só na primeira vez).
+        if self.client_id.custom().is_some() {
+            match self.authorize(app, &self.client_id.official(), PLAYBACK_SCOPES).await {
+                Ok(playback) => self.store.save_as(PLAYBACK_KEY, &playback)?,
+                // Sem ele, as faixas ainda tocam (pelo YouTube); o Perfil avisa para reconectar.
+                Err(e) => log::warn!("Spotify: login de reprodução falhou: {e}"),
+            }
+        }
+        Ok(())
     }
 
     /// `fresh` deu certo: guarda a cópia. Falhou (429, sem rede…): devolve a última cópia, se houver.
@@ -271,8 +312,15 @@ impl SpotifyProvider {
         Ok(items.into_iter().filter_map(|i| i.track?.into_track()).collect())
     }
 
-    /// Access token da Web API, renovando com o refresh token se precisar.
+    /// Access token para ler a Web API: o do site, se a pessoa entrou por ele (cota própria, sem os
+    /// 429 do client compartilhado); senão o OAuth, renovado com o refresh token se precisar.
     pub async fn access_token(&self) -> Result<String> {
+        match self.web.token().await {
+            Ok(token) => return Ok(token),
+            Err(Error::NotConnected(_)) => {}
+            Err(e) if !self.has_oauth() => return Err(e),
+            Err(e) => log::warn!("Spotify: token do site falhou ({e}); usando o do OAuth"),
+        }
         Ok(self.valid_token(Source::Spotify.key(), self.client_id.get()).await?.0)
     }
 
@@ -464,6 +512,18 @@ impl MusicProvider for SpotifyProvider {
                 || AccountStatus { connected: true, ..AccountStatus::disconnected(Source::Spotify) },
                 |(_, cached)| cached.clone(),
             ),
+            // Entrou pelo site, mas o token não veio agora (site lento, mudou…): continua conectado.
+            Err(e) if !matches!(e, Error::NotConnected(_)) && self.web.connected() => {
+                log::warn!("Spotify: perfil indisponível agora ({e})");
+                profile.as_ref().map_or_else(
+                    || AccountStatus {
+                        connected: true,
+                        notice: Some("O Spotify não respondeu agora; tento de novo em instantes.".into()),
+                        ..AccountStatus::disconnected(Source::Spotify)
+                    },
+                    |(_, cached)| cached.clone(),
+                )
+            }
             Err(_) => {
                 *profile = None;
                 AccountStatus::disconnected(Source::Spotify)
@@ -472,28 +532,29 @@ impl MusicProvider for SpotifyProvider {
     }
 
     async fn connect(&self, app: &AppHandle) -> Result<AccountStatus> {
-        // Garante o client ID mais recente antes de abrir o navegador (no máximo 1x por dia).
-        let _ = self.client_id.refresh_if_stale().await;
-        let tokens = self.authorize(app, &self.client_id.get(), SCOPES).await?;
-        self.store.save(Source::Spotify, &tokens)?;
-        // Client ID próprio: um segundo login, com o client oficial, só para tocar. O navegador
-        // já está logado no Spotify, então costuma ser só um "Concordo" (e só na primeira vez).
-        if self.client_id.custom().is_some() {
-            match self.authorize(app, &self.client_id.official(), PLAYBACK_SCOPES).await {
-                Ok(playback) => self.store.save_as(PLAYBACK_KEY, &playback)?,
-                // Sem ele, as faixas ainda tocam (pelo YouTube); o Perfil avisa para reconectar.
-                Err(e) => log::warn!("Spotify: login de reprodução falhou: {e}"),
-            }
-        }
-        // Com o token salvo, o login deu certo. Se o perfil não carregar agora (ex.: 429),
-        // a conta aparece conectada mesmo assim e os detalhes chegam na próxima leitura.
+        // Pelo site: funciona com Free e Premium, sem a cota compartilhada (ver `web_session`).
+        self.web.login().await?;
+        self.library.clear();
         *self.profile.lock().await = None;
-        Ok(self.account().await)
+        let account = self.account().await;
+        // Premium toca pelo librespot, que precisa do token OAuth (o do site não serve para ele).
+        // Sem esse segundo login, as faixas ainda tocam, pelo YouTube.
+        if account.premium == Some(true) && !self.has_oauth() {
+            if let Err(e) = self.connect_oauth(app).await {
+                log::warn!("Spotify: login OAuth (para tocar pelo Spotify) falhou: {e}");
+            }
+            *self.profile.lock().await = None;
+            return Ok(self.account().await);
+        }
+        Ok(account)
     }
 
     async fn disconnect(&self) -> Result<()> {
         *self.profile.lock().await = None;
         self.library.clear();
+        if let Err(e) = self.web.logout() {
+            log::warn!("Spotify: não apaguei a sessão do site: {e}");
+        }
         self.store.clear_as(PLAYBACK_KEY)?;
         self.store.clear(Source::Spotify)
     }

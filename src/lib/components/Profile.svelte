@@ -23,7 +23,7 @@
   let copied = $state(false);
 
   async function copyRedirect() {
-    await navigator.clipboard.writeText(REDIRECT_URI);
+    await api.copyText(REDIRECT_URI);
     copied = true;
     setTimeout(() => (copied = false), 2000);
   }

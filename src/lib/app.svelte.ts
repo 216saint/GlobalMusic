@@ -8,6 +8,7 @@ import type {
   PlayerSnapshot,
   Playlist,
   QueueSlot,
+  Repeat,
   Source,
   SourceResults,
   Track,
@@ -79,6 +80,8 @@ const EMPTY_PLAYER: PlayerSnapshot = {
   loading: false,
   positionMs: 0,
   volume: 0.8,
+  repeat: "off",
+  shuffle: false,
   version: 0,
 };
 const TICK_MS = 500;
@@ -99,6 +102,7 @@ function interleave<T>(groups: T[][]): T[] {
 /** Sugestões da janela "Nova playlist": o que tocou por último e a última busca (ficam neste computador). */
 const RECENT_KEY = "globalmusic.recent";
 const LAST_SEARCH_KEY = "globalmusic.lastSearch";
+const PLAY_MODE_KEY = "globalmusic.playMode";
 const MAX_RECENT = 30;
 const MAX_LAST_SEARCH = 20;
 
@@ -264,7 +268,27 @@ class AppStore {
     this.imported = imported;
     this.locals = locals;
     this.#applyPlayer(player);
+    // Repetir e aleatório valem de uma sessão para outra (o player no Rust começa sempre desligado).
+    const mode = readStored<{ repeat: Repeat; shuffle: boolean }>(PLAY_MODE_KEY, { repeat: "off", shuffle: false });
+    if (mode.repeat !== player.repeat) this.#applyPlayer(await api.setRepeat(mode.repeat));
+    if (mode.shuffle !== player.shuffle) this.#applyPlayer(await api.setShuffle(mode.shuffle));
     setInterval(() => this.#tick(), TICK_MS);
+  }
+
+  /** Repetir: desligado → a lista → só esta música → desligado (a mesma ordem do Spotify). */
+  async cycleRepeat() {
+    const next: Record<Repeat, Repeat> = { off: "all", all: "one", one: "off" };
+    this.#applyPlayer(await api.setRepeat(next[this.player.repeat]));
+    this.#storePlayMode();
+  }
+
+  async toggleShuffle() {
+    this.#applyPlayer(await api.setShuffle(!this.player.shuffle));
+    this.#storePlayMode();
+  }
+
+  #storePlayMode() {
+    store(PLAY_MODE_KEY, { repeat: this.player.repeat, shuffle: this.player.shuffle });
   }
 
   notify(message: string) {
@@ -483,7 +507,7 @@ class AppStore {
 
   async copyLink(url: string, message = "Link copiado") {
     try {
-      await navigator.clipboard.writeText(url);
+      await api.copyText(url);
       this.notify(message);
     } catch {
       this.notify(url);

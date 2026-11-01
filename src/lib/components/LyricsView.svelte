@@ -1,4 +1,4 @@
-<!-- Letra da faixa atual (LRCLIB). Sincronizada: o verso do momento fica destacado e centralizado;
+<!-- Letra da faixa atual (LRCLIB ou YouTube Music, com o crédito no fim). Sincronizada: o verso do momento fica destacado e centralizado;
      clicar num verso pula até ele. Sem sincronia: a letra corrida. -->
 <script lang="ts">
   import { app } from "$lib/app.svelte";
@@ -48,6 +48,9 @@
     {/each}
   {:else}
     <p class="plain">{lyrics.data.plain}</p>
+  {/if}
+  {#if lyrics?.data && !lyrics.data.instrumental}
+    <p class="credit">Letra: {lyrics.data.source}</p>
   {/if}
 </div>
 
@@ -108,6 +111,12 @@
 
   .status {
     margin: 0;
+    color: var(--ink-3);
+  }
+
+  .credit {
+    margin: 18px 0 0;
+    font-size: 11.5px;
     color: var(--ink-3);
   }
 

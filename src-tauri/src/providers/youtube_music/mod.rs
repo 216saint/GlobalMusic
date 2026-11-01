@@ -72,6 +72,15 @@ impl YoutubeMusicProvider {
         matches!(web_login::session_cookie(&self.app, &LOGIN), Ok(Some(_)))
     }
 
+    /// Letra do vídeo, como na aba "Letra" do site (texto corrido + crédito, em geral a Musixmatch).
+    /// Funciona sem login. `None`: o YouTube Music não tem letra para ele.
+    pub async fn lyrics(&self, video_id: &str) -> Result<Option<(String, Option<String>)>> {
+        let next = self.call("next", json!({ "videoId": video_id }), false).await?;
+        let Some(browse_id) = innertube::lyrics_browse_id(&next) else { return Ok(None) };
+        let page = self.call("browse", json!({ "browseId": browse_id }), false).await?;
+        Ok(innertube::parse_lyrics(&page))
+    }
+
     /// Cookies da sessão no formato cookies.txt, para o yt-dlp tocar como a pessoa logada.
     /// `None` sem login (o YouTube tende a recusar com "confirm you're not a bot").
     pub fn ytdlp_cookies(&self) -> Option<String> {

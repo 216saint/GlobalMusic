@@ -96,6 +96,35 @@ Ajustes feitos:
 O padrão continua sendo "funciona sem configurar nada". O Client ID próprio é a válvula de
 escape para quando a cota compartilhada não der conta.
 
+#### 0.6.3: login pelo site (contas Free)
+
+**Problema.** No teste com colegas, a Web API pelo client compartilhado respondeu 429 em
+praticamente toda tentativa. A válvula de escape também fechou: desde fev/2026, criar um Client ID
+exige Premium. Para conta Free, não sobrava nenhum caminho oficial.
+
+**Decisão (provisória, para o teste).** O Spotify passa a ser conectado **pelo site**, como YouTube
+Music e SoundCloud (`providers/spotify/web_session.rs`):
+
+1. A pessoa entra em accounts.spotify.com numa janela do app. A sessão é o cookie `sp_dc`, guardado
+   no perfil da WebView.
+2. Para ler a Web API, o app abre o player web (`open.spotify.com`) numa janela **invisível**. O site
+   pede o próprio token a `/api/token`, como faz no navegador. Um script injetado só observa a
+   resposta e devolve o token pelo título da janela, que é o único canal de uma página externa para o
+   app, sem dar a ela acesso aos comandos do Tauri. A janela fecha em seguida.
+3. Esse token, do client do player web, tem cota própria. Biblioteca, busca e curtidas usam ele.
+4. Contas Premium fazem também o login OAuth de antes, porque o librespot precisa desse token para
+   tocar.
+
+**Por que observar em vez de gerar o token.** Desde 2025, o `/api/token` exige um código TOTP
+calculado com um segredo escondido no JavaScript do site. Reimplementar isso no app seria contornar
+ativamente a proteção, e quebraria a cada troca de segredo. Deixando o próprio site calcular, o app
+só depende de o player continuar pedindo o token por `fetch`, o que foi conferido no Chrome em
+2026-10-29.
+
+**Riscos assumidos.** É uma API interna, fora dos termos de uso do Spotify. Pode parar sem aviso.
+Se parar, quem tiver o OAuth (Premium) continua funcionando por ele (`access_token` cai para o
+OAuth), e a biblioteca já lida segue no cache em disco.
+
 ### Discord: ID público embutido
 
 O Application ID do Discord é público, e não existe login. Basta criar o app **uma vez** e
