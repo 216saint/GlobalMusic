@@ -263,6 +263,13 @@ const commands: Record<string, (args: any) => unknown> = {
   player_set_repeat: ({ repeat }) => set({ repeat }),
   // Na demonstração o aleatório só acende o botão (a ordem embaralhada é do `player/queue.rs`).
   player_set_shuffle: ({ on }) => set({ shuffle: on }),
+  // Na demonstração, "semelhantes" são as outras faixas do catálogo.
+  similar_tracks: ({ track }) => TRACKS.filter((x) => x.source !== track.source || x.id !== track.id),
+  player_continue: ({ tracks, contextName }) => {
+    if (!player.current) return commands.player_play({ tracks, start: 0, contextName });
+    nowQueued = false;
+    return set({ context: [player.current, ...tracks], contextIndex: 0, contextName });
+  },
   player_enqueue: ({ track }) => addToQueue(track, false),
   player_play_next: ({ track }) => addToQueue(track, true),
   player_remove: ({ slot }) => {

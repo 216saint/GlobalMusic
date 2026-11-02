@@ -120,12 +120,66 @@ fn netscape_line(domain: &str, subdomains: bool, path: &str, secure: bool, expir
     format!("{domain}\t{}\t{path}\t{}\t{expires}\t{name}\t{value}\n", flag(subdomains), flag(secure))
 }
 
-pub fn logout(app: &AppHandle, spec: &WebLogin) -> Result<()> {
-    let window = any_window(app)?;
+/// Apaga os cookies dos sites da conta e confere que a sessão saiu mesmo
+/// (sem conferir, uma falha aqui deixava o "Desconectar" sem efeito e sem aviso).
+pub async fn logout(app: &AppHandle, spec: &WebLogin) -> Result<()> {
+    let mut doomed = Vec::new();
     for url in spec.logout_urls {
-        for cookie in cookies(app, url)? {
-            window.delete_cookie(cookie).map_err(|e| Error::Other(e.to_string()))?;
+        doomed.extend(cookies(app, url)?);
+    }
+    delete_cookies(&any_window(app)?, doomed).await?;
+
+    // A exclusão no WebView2 termina em segundo plano: espera um pouco antes de desistir.
+    for _ in 0..10 {
+        if session_cookie(app, spec)?.is_none() {
+            return Ok(());
         }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Err(Error::Other("não consegui sair da conta; feche e abra o app e tente de novo".into()))
+}
+
+/// No Windows, o `delete_cookie` do wry só apaga cookies de host ("accounts.google.com"). Os de
+/// domínio (".google.com", onde ficam SAPISID/SID) o WebView2 lista **sem** o ponto, e o wry recria
+/// o cookie assim para apagar: não bate com nenhum e nada acontece. O único jeito que funcionou
+/// (testado) é `DeleteCookiesWithDomainAndPath` com o domínio com ponto; sem ponto, para os de host.
+#[cfg(windows)]
+async fn delete_cookies(window: &tauri::WebviewWindow, cookies: Vec<Cookie<'static>>) -> Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2;
+    use windows_core::{Interface, HSTRING};
+
+    let targets: Vec<(String, String, String)> = cookies
+        .iter()
+        .map(|c| {
+            let domain = c.domain().unwrap_or_default().trim_start_matches('.').to_owned();
+            (c.name().to_owned(), domain, c.path().unwrap_or("/").to_owned())
+        })
+        .collect();
+    let (done, finished) = tokio::sync::oneshot::channel();
+    window
+        .with_webview(move |webview| {
+            let result = (|| -> windows_core::Result<()> {
+                // SAFETY: chamadas COM na thread principal, onde o `with_webview` roda.
+                unsafe {
+                    let manager = webview.controller().CoreWebView2()?.cast::<ICoreWebView2_2>()?.CookieManager()?;
+                    for (name, domain, path) in &targets {
+                        let (name, path) = (HSTRING::from(name.as_str()), HSTRING::from(path.as_str()));
+                        manager.DeleteCookiesWithDomainAndPath(&name, &HSTRING::from(domain.as_str()), &path)?;
+                        manager.DeleteCookiesWithDomainAndPath(&name, &HSTRING::from(format!(".{domain}")), &path)?;
+                    }
+                }
+                Ok(())
+            })();
+            let _ = done.send(result.map_err(|e| Error::Other(e.to_string())));
+        })
+        .map_err(|e| Error::Other(e.to_string()))?;
+    finished.await.map_err(|_| Error::Other("a janela fechou no meio da saída da conta".into()))?
+}
+
+#[cfg(not(windows))]
+async fn delete_cookies(window: &tauri::WebviewWindow, cookies: Vec<Cookie<'static>>) -> Result<()> {
+    for cookie in cookies {
+        window.delete_cookie(cookie).map_err(|e| Error::Other(e.to_string()))?;
     }
     Ok(())
 }

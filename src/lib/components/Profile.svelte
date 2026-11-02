@@ -37,6 +37,14 @@
   const clientIdValid = $derived(CLIENT_ID_FORMAT.test(clientIdInput.trim()));
   let clientIdMessage = $state<string | null>(null);
 
+  // Aberto/fechado é da pessoa: só abre sozinho (Client ID salvo ou Spotify recusando), nunca fecha.
+  // Antes era `open={condição}`: o Svelte reaplicava a condição (falsa) a cada mudança no mesmo bloco
+  // ("Copiado", digitar o Client ID, voltar do navegador), e o passo a passo fechava no meio.
+  let advancedOpen = $state(false);
+  $effect(() => {
+    if (savedClientId !== null || app.notice?.includes("muitas requisições")) advancedOpen = true;
+  });
+
   let version = $state<string | null>(null);
 
   async function checkUpdates() {
@@ -101,7 +109,9 @@
               {/if}
             </div>
             {#if account.connected}
-              <button class="btn ghost" onclick={() => app.disconnect(account.source)}>Desconectar</button>
+              <button class="btn ghost" disabled={app.busySource !== null} onclick={() => app.disconnect(account.source)}>
+                {app.busySource === account.source ? "Saindo…" : "Desconectar"}
+              </button>
             {:else}
               <button class="btn" disabled={app.busySource !== null} onclick={() => app.connect(account.source)}>
                 {app.busySource === account.source ? "Aguardando login…" : "Conectar"}
@@ -115,7 +125,7 @@
         <p class="notice" role="alert">{app.notice}</p>
       {/if}
 
-      <details class="advanced" open={savedClientId !== null || app.notice?.includes("muitas requisições")}>
+      <details class="advanced" bind:open={advancedOpen}>
         <summary>Spotify recusando por excesso de requisições?</summary>
         <p>
           O GlobalMusic usa um Client ID compartilhado com outros apps, e o Spotify divide o limite de requisições entre

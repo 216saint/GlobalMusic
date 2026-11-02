@@ -124,9 +124,9 @@ impl WebSession {
         web_login::login(&self.app, &LOGIN).await
     }
 
-    pub fn logout(&self) -> Result<()> {
+    pub async fn logout(&self) -> Result<()> {
         self.forget();
-        web_login::logout(&self.app, &LOGIN)
+        web_login::logout(&self.app, &LOGIN).await
     }
 
     /// Descarta o token guardado (ex.: o Spotify recusou com 401).

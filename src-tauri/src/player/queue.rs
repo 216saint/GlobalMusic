@@ -66,6 +66,13 @@ impl Queue {
         }
     }
 
+    /// Troca o resto da lista por `tracks`: a faixa atual vira a primeira do novo contexto e
+    /// continua tocando, e a sua fila fica como está. Sem faixa atual, é um `replace` do começo.
+    pub fn continue_with(&mut self, tracks: Vec<Track>) {
+        let Some(now) = self.now.clone() else { return self.replace(tracks, 0) };
+        self.replace(std::iter::once(now).chain(tracks).collect(), 0);
+    }
+
     pub fn shuffled(&self) -> bool {
         self.original.is_some()
     }
@@ -243,6 +250,22 @@ mod tests {
 
     fn ids(tracks: &[Track]) -> Vec<&str> {
         tracks.iter().map(|t| t.id.as_str()).collect()
+    }
+
+    #[test]
+    fn continue_with_keeps_the_current_song_and_your_queue() {
+        let mut q = Queue::default();
+        q.replace(playlist(&["a", "b", "c"]), 1);
+        q.push(track("mine", Source::Soundcloud));
+        q.continue_with(playlist(&["x", "y"]));
+        assert_eq!(q.current().unwrap().id, "b", "a música que toca não muda");
+        assert_eq!(ids(q.context()), ["b", "x", "y"]);
+        assert_eq!(q.next().unwrap().id, "mine", "a sua fila continua na frente");
+        assert_eq!(q.next().unwrap().id, "x");
+
+        let mut empty = Queue::default();
+        empty.continue_with(playlist(&["x"]));
+        assert_eq!(empty.current().unwrap().id, "x", "sem nada tocando: começa pelas novas");
     }
 
     #[test]

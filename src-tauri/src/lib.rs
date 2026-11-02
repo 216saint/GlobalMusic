@@ -81,6 +81,8 @@ pub fn run() {
             commands::player_seek,
             commands::player_set_repeat,
             commands::player_set_shuffle,
+            commands::player_continue,
+            commands::similar_tracks,
             commands::player_enqueue,
             commands::player_play_next,
             commands::player_remove,

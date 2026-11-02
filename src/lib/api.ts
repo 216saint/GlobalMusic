@@ -100,6 +100,11 @@ export const api = {
   setVolume: (volume: number) => call<PlayerSnapshot>("player_set_volume", { volume }),
   setRepeat: (repeat: Repeat) => call<PlayerSnapshot>("player_set_repeat", { repeat }),
   setShuffle: (on: boolean) => call<PlayerSnapshot>("player_set_shuffle", { on }),
+  /** `tracks` viram o resto da lista, sem interromper a música que toca. */
+  continueWith: (tracks: Track[], contextName: string | null = null) =>
+    call<PlayerSnapshot>("player_continue", { tracks, contextName }),
+  /** Músicas semelhantes (rádio do YouTube Music), sem a própria faixa. */
+  similarTracks: (track: Track) => call<Track[]>("similar_tracks", { track }),
 
   onPlayerState: async (cb: (snapshot: PlayerSnapshot) => void) => (await getBackend()).onPlayer(cb),
   onPlayerError: async (cb: (message: string) => void) => (await getBackend()).onPlayerError(cb),

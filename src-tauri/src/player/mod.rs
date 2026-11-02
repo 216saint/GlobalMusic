@@ -137,6 +137,22 @@ impl Player {
         self.restart_track(self.queue.current().is_some());
     }
 
+    /// "Músicas semelhantes": `tracks` viram o resto da lista, sem interromper a música atual.
+    /// Devolve `true` se começou a tocar outra faixa (nada tocando, ou a lista já tinha acabado).
+    pub fn continue_with(&mut self, tracks: Vec<Track>, name: Option<String>) -> bool {
+        if self.queue.current().is_none() {
+            self.play_queue(tracks, 0, name);
+            return self.queue.current().is_some();
+        }
+        self.queue.continue_with(tracks);
+        self.context_name = name;
+        if self.ended {
+            self.next();
+            return true;
+        }
+        false
+    }
+
     pub fn toggle(&mut self) {
         let now = Instant::now();
         if self.loading {
@@ -357,6 +373,26 @@ mod tests {
         p.started(0);
         p.finished();
         assert!(!p.snapshot().playing);
+    }
+
+    #[test]
+    fn similar_songs_continue_without_interrupting_or_after_the_end() {
+        let mut p = Player::default();
+        p.play_queue(queue(2), 0, None);
+        p.started(30_000);
+        assert!(!p.continue_with(queue(3), Some("Semelhantes".into())), "não troca a que toca");
+        let s = p.snapshot();
+        assert_eq!(s.current.unwrap().id, "0");
+        assert!(s.position_ms >= 30_000);
+        assert_eq!(s.context_name.as_deref(), Some("Semelhantes"));
+
+        // A lista acabou: as semelhantes já começam a tocar.
+        let mut p = Player::default();
+        p.play_queue(queue(1), 0, None);
+        p.started(0);
+        p.finished();
+        assert!(p.continue_with(queue(3), None));
+        assert!(p.snapshot().playing);
     }
 
     #[test]

@@ -175,6 +175,44 @@ fn parse_track(item: &Value) -> Option<Track> {
     })
 }
 
+/// Faixas do "rádio" de um vídeo: a fila que o site monta ao tocar uma música (`next` com
+/// `playlistId: RDAMVM<id>`). Sem o próprio vídeo, que vem primeiro, e sem repetidas.
+pub fn parse_radio(next: &Value, seed: &str) -> Vec<Track> {
+    let mut items = Vec::new();
+    collect(next, "playlistPanelVideoRenderer", &mut items);
+    let mut seen = std::collections::HashSet::from([seed.to_owned()]);
+    items
+        .into_iter()
+        .filter_map(parse_panel_video)
+        .filter(|t| seen.insert(t.id.clone()))
+        .collect()
+}
+
+/// Um item da fila do player do site: "Artista • Álbum • Ano" (música) ou "Canal • views" (vídeo).
+fn parse_panel_video(item: &Value) -> Option<Track> {
+    let id = item["videoId"].as_str()?;
+    let title = runs(&item["title"]).first()?.text.to_owned();
+    let byline = runs(&item["longBylineText"]);
+    let mut artists: Vec<String> = byline
+        .iter()
+        .filter(|r| r.page_type == Some("MUSIC_PAGE_TYPE_ARTIST"))
+        .map(|r| r.text.to_owned())
+        .collect();
+    if artists.is_empty() {
+        artists.extend(runs(&item["shortBylineText"]).first().map(|r| r.text.to_owned()));
+    }
+    Some(Track {
+        id: id.to_owned(),
+        source: Source::YoutubeMusic,
+        title,
+        artists,
+        album: byline.iter().find(|r| r.page_type == Some("MUSIC_PAGE_TYPE_ALBUM")).map(|r| r.text.to_owned()),
+        duration_ms: runs(&item["lengthText"]).first().and_then(|r| parse_duration(r.text)).unwrap_or(0),
+        artwork: artwork_of(item),
+        isrc: None,
+    })
+}
+
 fn parse_playlist(item: &Value) -> Option<Playlist> {
     // Só cards que abrem uma playlist ("VL" + id); ignora álbuns, artistas e o botão "Nova playlist".
     let browse_id = item.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str)?;
@@ -318,6 +356,33 @@ mod tests {
         let (text, credit) = parse_lyrics(&browse).unwrap();
         assert_eq!(text, "Primeiro verso\nSegundo verso");
         assert_eq!(credit.as_deref(), Some("Fonte: Musixmatch"));
+    }
+
+    /// Formato real do `next` com `playlistId: RDAMVM<id>` (2026-11-01), enxugado.
+    #[test]
+    fn parses_the_radio_without_the_seed_or_repeats() {
+        let artist = |name: &str| json!({ "text": name, "navigationEndpoint": { "browseEndpoint": {
+            "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } } });
+        let item = |id: &str, title: &str, byline: Value| json!({ "playlistPanelVideoRenderer": {
+            "videoId": id,
+            "title": { "runs": [{ "text": title }] },
+            "longBylineText": { "runs": byline },
+            "shortBylineText": { "runs": [{ "text": "Canal" }] },
+            "lengthText": { "runs": [{ "text": "3:24" }] },
+            "thumbnail": { "thumbnails": [{ "url": "https://i.ytimg.com/vi/x/hqdefault.jpg", "width": 400, "height": 225 }] }
+        }});
+        let next = json!({ "contents": { "playlistPanelRenderer": { "contents": [
+            item("seed", "A que tocou", json!([artist("Rick Astley")])),
+            item("a1", "Together Forever", json!([artist("Rick Astley"), { "text": " • " }, { "text": "208 mi de visualizações" }])),
+            item("a1", "Together Forever", json!([artist("Rick Astley")])),
+            item("v2", "Upload de fã", json!([{ "text": "Alguém" }, { "text": " • " }, { "text": "3 mil visualizações" }])),
+        ]}}});
+        let radio = parse_radio(&next, "seed");
+        assert_eq!(radio.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a1", "v2"]);
+        assert_eq!(radio[0].artists, ["Rick Astley"]);
+        assert_eq!(radio[0].duration_ms, 204_000);
+        assert!(radio[0].artwork.is_some());
+        assert_eq!(radio[1].artists, ["Canal"], "sem página de artista: o canal");
     }
 
     #[test]

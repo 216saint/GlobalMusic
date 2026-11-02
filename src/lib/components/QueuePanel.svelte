@@ -3,6 +3,7 @@
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import X from "@lucide/svelte/icons/x";
+  import Radio from "@lucide/svelte/icons/radio";
   import { app } from "$lib/app.svelte";
   import type { QueueSlot, Track } from "$lib/types";
   import Bars from "./Bars.svelte";
@@ -39,6 +40,14 @@
     {#if app.player.current}
       <h2>Tocando agora</h2>
       <TrackRow track={app.player.current} current playing={app.player.playing} onplay={() => {}} />
+      <button
+        class="similar"
+        disabled={app.findingSimilar !== null}
+        onclick={() => app.player.current && app.playSimilar(app.player.current)}
+      >
+        <Radio size={15} />
+        {app.findingSimilar ? "Buscando semelhantes…" : "Continuar com músicas semelhantes"}
+      </button>
     {/if}
 
     {#if app.upNext.length}
@@ -47,7 +56,7 @@
     {/if}
 
     {#if app.contextRest.length}
-      <h2>{app.player.contextName ? `A seguir de ${app.player.contextName}` : "A seguir"}</h2>
+      <h2>{app.player.contextName ? `A seguir: ${app.player.contextName}` : "A seguir"}</h2>
       {@render rows(app.contextRest)}
     {/if}
 
@@ -146,6 +155,27 @@
   .remove:hover {
     color: var(--ink);
     background: var(--tint-2);
+  }
+
+  .similar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 8px 0;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--edge);
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+
+  .similar:hover:not(:disabled) {
+    color: var(--ink);
+    background: var(--tint-2);
+  }
+
+  .similar:disabled {
+    opacity: 0.6;
   }
 
   .empty {

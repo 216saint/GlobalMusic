@@ -552,7 +552,7 @@ impl MusicProvider for SpotifyProvider {
     async fn disconnect(&self) -> Result<()> {
         *self.profile.lock().await = None;
         self.library.clear();
-        if let Err(e) = self.web.logout() {
+        if let Err(e) = self.web.logout().await {
             log::warn!("Spotify: não apaguei a sessão do site: {e}");
         }
         self.store.clear_as(PLAYBACK_KEY)?;

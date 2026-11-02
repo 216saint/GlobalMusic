@@ -400,12 +400,45 @@ class AppStore {
   }
 
   async disconnect(source: Source) {
-    await api.disconnectAccount(source);
-    await Promise.all([this.loadAccounts(), this.loadLibrary()]);
+    this.busySource = source;
+    this.notice = null;
+    try {
+      await api.disconnectAccount(source);
+    } catch (e) {
+      this.notice = errorMessage(e);
+    } finally {
+      this.busySource = null;
+    }
+    await Promise.all([this.loadAccounts(), this.loadLibrary()]).catch(() => {});
   }
 
   async play(tracks: Track[], start: number, contextName: string | null = null) {
     this.#applyPlayer(await api.play($state.snapshot(tracks), start, contextName));
+  }
+
+  /** Faixa cujas semelhantes estão sendo buscadas (o botão mostra "Buscando…"). */
+  findingSimilar = $state<Track | null>(null);
+
+  /** Fila de músicas semelhantes a `track`. Se ela é a que toca, continua tocando e as semelhantes
+   *  viram o resto da lista; senão, ela começa a tocar seguida delas. */
+  async playSimilar(track: Track) {
+    if (this.findingSimilar) return;
+    this.findingSimilar = track;
+    try {
+      const seed = $state.snapshot(track);
+      const similar = await api.similarTracks(seed);
+      if (!similar.length) return this.notify("Não achei músicas semelhantes a esta");
+      const name = `Semelhantes a ${track.title}`;
+      const current = this.player.current;
+      this.#applyPlayer(
+        current && sameTrack(current, track) ? await api.continueWith(similar, name) : await api.play([seed, ...similar], 0, name),
+      );
+      this.notify(`${similar.length} músicas semelhantes na fila`);
+    } catch (e) {
+      this.notify(`Não deu para buscar semelhantes: ${errorMessage(e)}`);
+    } finally {
+      this.findingSimilar = null;
+    }
   }
 
   async enqueue(track: Track) {

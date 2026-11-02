@@ -8,6 +8,7 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Replace from "@lucide/svelte/icons/replace";
   import ListPlus from "@lucide/svelte/icons/list-plus";
+  import Radio from "@lucide/svelte/icons/radio";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Plus from "@lucide/svelte/icons/plus";
   import { app } from "$lib/app.svelte";
@@ -23,7 +24,7 @@
     choosing = false;
   });
   // Altura aproximada (para caber na janela): itens fixos + a lista de playlists, se aberta.
-  const height = $derived(270 + (choosing ? Math.min(app.locals.length + 1, 6) * 36 : 0));
+  const height = $derived(306 +(choosing ? Math.min(app.locals.length + 1, 6) * 36 : 0));
   // Mantém o menu dentro da janela mesmo clicando perto das bordas.
   const left = $derived(menu ? Math.min(menu.x, window.innerWidth - WIDTH - 8) : 0);
   const top = $derived(menu ? Math.max(8, Math.min(menu.y, window.innerHeight - height - 8)) : 0);
@@ -52,6 +53,9 @@
     <p class="head">{track.title}</p>
     <button role="menuitem" onclick={() => run((t) => app.playNext(t))}>
       <ListStart size={15} /> Tocar a seguir
+    </button>
+    <button role="menuitem" onclick={() => run((t) => app.playSimilar(t))}>
+      <Radio size={15} /> Tocar semelhantes
     </button>
     <button role="menuitem" onclick={() => run((t) => app.enqueue(t))}>
       <ListEnd size={15} /> Adicionar à fila

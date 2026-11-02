@@ -203,7 +203,7 @@ impl MusicProvider for SoundcloudProvider {
     }
 
     async fn disconnect(&self) -> Result<()> {
-        web_login::logout(&self.app, &LOGIN)
+        web_login::logout(&self.app, &LOGIN).await
     }
 
     async fn search_tracks(&self, query: &str, limit: u32) -> Result<Vec<Track>> {

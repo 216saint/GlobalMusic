@@ -81,6 +81,14 @@ impl YoutubeMusicProvider {
         Ok(innertube::parse_lyrics(&page))
     }
 
+    /// Músicas semelhantes: o "rádio" que o site monta ao tocar o vídeo (~50 faixas, sem ele).
+    /// Funciona sem login; logado, leva em conta o gosto da pessoa.
+    pub async fn radio(&self, video_id: &str) -> Result<Vec<Track>> {
+        let payload = json!({ "videoId": video_id, "playlistId": format!("RDAMVM{video_id}"), "isAudioOnly": true });
+        let next = self.call("next", payload, self.is_logged_in()).await?;
+        Ok(innertube::parse_radio(&next, video_id))
+    }
+
     /// Cookies da sessão no formato cookies.txt, para o yt-dlp tocar como a pessoa logada.
     /// `None` sem login (o YouTube tende a recusar com "confirm you're not a bot").
     pub fn ytdlp_cookies(&self) -> Option<String> {
@@ -134,7 +142,7 @@ impl MusicProvider for YoutubeMusicProvider {
     }
 
     async fn disconnect(&self) -> Result<()> {
-        web_login::logout(&self.app, &LOGIN)
+        web_login::logout(&self.app, &LOGIN).await
     }
 
     async fn search_tracks(&self, query: &str, limit: u32) -> Result<Vec<Track>> {

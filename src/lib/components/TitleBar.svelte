@@ -12,6 +12,7 @@
   import Library from "@lucide/svelte/icons/library";
   import Layers from "@lucide/svelte/icons/layers";
   import ListMusic from "@lucide/svelte/icons/list-music";
+  import Disc3 from "@lucide/svelte/icons/disc-3";
   import Users from "@lucide/svelte/icons/users";
   import { app, type Filter, type Panel, type Tab } from "$lib/app.svelte";
   import { SOURCES, SOURCE_LABEL } from "$lib/types";
@@ -83,6 +84,17 @@
   </nav>
 
   <div class="actions" data-tauri-drag-region>
+    <!-- Volta ao player de qualquer tela (perfil, amigos). Com a fila aberta o player também está visível. -->
+    <button
+      class="icon-btn"
+      class:on={app.panel === "now" || app.panel === "queue"}
+      aria-label="Player"
+      title="Player"
+      aria-pressed={app.panel === "now" || app.panel === "queue"}
+      onclick={() => (app.panel = "now")}
+    >
+      <Disc3 size={18} strokeWidth={1.6} />
+    </button>
     <button
       class="icon-btn"
       class:on={app.panel === "queue"}

@@ -622,6 +622,56 @@ estão no ADR 0003, seção "0.6.3".
   `ended`). Assim, "anterior" cai na regra dos 2 s e recomeça a música que acabou de tocar. "Anterior"
   agora sempre toca, e "tocar" depois do fim começa do zero (em vez de retomar do fim e acabar na hora).
 
+**"Desconectar" não fazia nada (YouTube Music; o mesmo valia para SoundCloud e o login do Spotify pelo site):**
+- *Sintoma:* clicar em Desconectar não mudava nada e não mostrava erro, então também não dava para
+  entrar com outra conta.
+- *Investigação:* um programa de teste à parte (wry + WebView2 num perfil temporário) abriu o YouTube
+  Music e o login do Google, listou os cookies e testou cinco formas de apagar, uma de cada vez.
+  - O WebView2 lista os cookies **de domínio** sem o ponto: `youtube.com` em vez de `.youtube.com`.
+  - O `delete_cookie` do wry recria o cookie com esse domínio para apagar. Não bate com nenhum, e
+    nada acontece, sem erro. Só os cookies **de host** (`accounts.google.com`) saíam.
+  - Os que provam a sessão (`SAPISID`, `SID`…) são justamente de domínio (`.google.com`/`.youtube.com`).
+  - Também não funcionaram: `delete_cookie` com o ponto, `DeleteCookies(nome, url)` e
+    `DeleteCookiesWithDomainAndPath` sem o ponto.
+  - Funcionou: `DeleteCookiesWithDomainAndPath` **com** o ponto.
+- *Correção:* no Windows, `web_login::logout` chama o gerenciador de cookies do WebView2 direto
+  (`with_webview`, crates `webview2-com`/`windows-core`, as mesmas versões do wry, então o binário não
+  cresce), com o domínio com e sem ponto. No teste, os dois tipos de cookie saíram.
+- O `logout` agora **confere** que o cookie de sessão sumiu; se não sumiu, devolve erro. A tela mostra
+  esse erro, e o botão fica "Saindo…" enquanto isso. Antes, a falha era engolida pelo front.
+
+**Músicas semelhantes:**
+- *Fonte:* o "rádio" do YouTube Music, que é a fila que o site monta ao tocar uma música
+  (InnerTube `next` com `playlistId: RDAMVM<videoId>`; ~50 faixas, sem login). Faixas do Spotify e do
+  SoundCloud usam o vídeo equivalente (`Audio::youtube_equivalent`). *Por que não o Spotify:* o
+  endpoint de recomendações da Web API foi fechado para apps novos (nov/2024).
+- O formato é outro (`playlistPanelVideoRenderer`), então tem parser próprio (`innertube::parse_radio`).
+  Ele tira a própria música, que vem primeiro, e as repetidas.
+- *Onde:*
+  - "Tocar semelhantes" no menu de botão direito de uma faixa: ela toca, seguida das semelhantes.
+  - "Continuar com músicas semelhantes" na fila: a música que toca **não é interrompida**, e as
+    semelhantes viram o resto da lista (`Queue::continue_with`). A "sua fila" continua na frente.
+    Se a lista já tinha acabado, a primeira semelhante começa a tocar.
+- O título da lista na fila passou de "A seguir de X" para "A seguir: X" ("A seguir: Semelhantes a …").
+
+**Curtir no player:** um coração ao lado do volume, espelhando o botão da letra. Usa o mesmo
+`toggleFavorite` do menu (curte no GlobalMusic e no serviço de origem) e fica preenchido quando curtida.
+
+**Atalho para o player na barra de cima:** um disco antes de Fila/Amigos/Perfil. Ele volta ao player de
+qualquer tela e fica aceso quando o player está visível (com a fila aberta também).
+
+**Passo a passo do Client ID do Spotify fechava sozinho** ao clicar em "Copiar", no link do painel
+ou ao digitar o Client ID:
+- *Causa:* o `<details>` usava `open={savedClientId !== null || …}`. O Svelte 5 junta numa só função
+  de atualização (`template_effect`) todas as partes dinâmicas do bloco: `details.open`, o texto
+  "Copiado/Copiar", o `aria-invalid` do campo, o "Buscar atualizações"… Qualquer uma que mudasse
+  reaplicava `details.open = <condição>`, que era falsa, por cima do clique da pessoa. Confirmado no
+  código gerado pelo Vite e reproduzido digitando no campo.
+- *Correção:* `bind:open` com um estado próprio. O `$effect` só **abre** sozinho (Client ID salvo ou
+  Spotify recusando) e nunca fecha.
+- *Lição:* em Svelte 5, um atributo que a pessoa também muda (`open`, `value`, `checked`) não deve ser
+  `attr={expressão}`. Usar `bind:` ou estado próprio.
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 

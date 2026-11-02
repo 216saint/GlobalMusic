@@ -5,6 +5,7 @@
   import Pause from "@lucide/svelte/icons/pause";
   import Volume1 from "@lucide/svelte/icons/volume-1";
   import MicVocal from "@lucide/svelte/icons/mic-vocal";
+  import Heart from "@lucide/svelte/icons/heart";
   import Shuffle from "@lucide/svelte/icons/shuffle";
   import Repeat from "@lucide/svelte/icons/repeat";
   import Repeat1 from "@lucide/svelte/icons/repeat-1";
@@ -34,6 +35,7 @@
 
 <section class="now" aria-label="Tocando agora">
   {#if track}
+    {@const liked = app.isFavorite(track)}
     {#if app.showLyrics}
       <LyricsView />
     {:else}
@@ -96,6 +98,16 @@
     </div>
 
     <div class="volume">
+      <button
+        class="like"
+        class:on={liked}
+        aria-pressed={liked}
+        aria-label="Curtir"
+        title={liked ? `Curtida (GlobalMusic e ${SOURCE_LABEL[track.source]})` : `Curtir (GlobalMusic e ${SOURCE_LABEL[track.source]})`}
+        onclick={() => track && app.toggleFavorite(track)}
+      >
+        <Heart size={16} strokeWidth={1.6} fill={liked ? "currentColor" : "none"} />
+      </button>
       <Volume1 size={16} strokeWidth={1.6} />
       <PillSlider value={app.player.volume} max={1} label="Volume" thick={3} onchange={(v) => api.setVolume(v)} />
       <button
@@ -169,17 +181,27 @@
     width: min(100%, 420px);
   }
 
-  .lyrics-toggle {
+  .lyrics-toggle,
+  .like {
     display: grid;
     place-items: center;
+    flex: none;
     width: 30px;
     height: 30px;
-    margin-left: 6px;
     border-radius: 9px;
     color: var(--ink-3);
   }
 
-  .lyrics-toggle:hover {
+  .lyrics-toggle {
+    margin-left: 6px;
+  }
+
+  .like {
+    margin-right: 6px;
+  }
+
+  .lyrics-toggle:hover,
+  .like:hover {
     color: var(--ink);
     background: var(--tint-1);
   }
@@ -187,6 +209,10 @@
   .lyrics-toggle.on {
     color: var(--ink);
     background: var(--tint-3);
+  }
+
+  .like.on {
+    color: var(--violet-bright);
   }
 
   .times {
@@ -245,7 +271,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 160px;
+    width: 200px;
     color: var(--ink-3);
   }
 

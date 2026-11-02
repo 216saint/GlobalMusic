@@ -200,6 +200,35 @@ pub async fn player_set_repeat(app: AppHandle, state: State<'_, AppState>, repea
     Ok(snapshot)
 }
 
+/// `tracks` viram o resto da lista, sem interromper a música atual (ex.: as semelhantes a ela).
+#[tauri::command]
+pub async fn player_continue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tracks: Vec<Track>,
+    context_name: Option<String>,
+) -> Result<PlayerSnapshot> {
+    let mut started = false;
+    let snapshot = update_player(&app, &state, |p| started = p.continue_with(tracks, context_name)).await;
+    if started {
+        start_current(&app, &snapshot).await;
+    } else {
+        preload_upcoming(&app).await;
+    }
+    Ok(snapshot)
+}
+
+/// Músicas semelhantes, pelo "rádio" do YouTube Music: do próprio vídeo ou, para Spotify e
+/// SoundCloud, do vídeo equivalente (o mesmo que o player usa para tocá-las pelo YouTube).
+#[tauri::command]
+pub async fn similar_tracks(state: State<'_, AppState>, track: Track) -> Result<Vec<Track>> {
+    let video_id = match track.source {
+        Source::YoutubeMusic => track.id.clone(),
+        _ => state.audio.youtube_equivalent(&track).await?,
+    };
+    state.providers.youtube.radio(&video_id).await
+}
+
 /// Aleatório: embaralha o resto da lista atual (a música que toca não muda).
 #[tauri::command]
 pub async fn player_set_shuffle(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<PlayerSnapshot> {
