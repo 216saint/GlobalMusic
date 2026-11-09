@@ -15,6 +15,7 @@ use crate::lyrics::Lyrics;
 use crate::error::{Error, Result};
 use crate::models::{AccountStatus, Playlist, Source, SourceResults, Track};
 use crate::player::queue::Slot;
+use crate::player::resolver;
 use crate::player::routing::PlaybackRoute;
 use crate::player::{Player, PlayerSnapshot, Repeat};
 use crate::state::AppState;
@@ -226,7 +227,7 @@ pub async fn similar_tracks(state: State<'_, AppState>, track: Track) -> Result<
         Source::YoutubeMusic => track.id.clone(),
         _ => state.audio.youtube_equivalent(&track).await?,
     };
-    state.providers.youtube.radio(&video_id).await
+    Ok(resolver::distinct_songs(&track, state.providers.youtube.radio(&video_id).await?))
 }
 
 /// Aleatório: embaralha o resto da lista atual (a música que toca não muda).
@@ -515,7 +516,7 @@ pub async fn on_audio_event(app: &AppHandle, event: AudioEvent) {
             let keep_going = state.player.lock().await.failed();
             if keep_going {
                 let _ = app.emit(PLAYER_ERROR_EVENT, format!("pulei uma faixa: {reason}"));
-                let snapshot = update_player(app, &state, Player::next).await;
+                let snapshot = update_player(app, &state, Player::skip_failed).await;
                 start_current(app, &snapshot).await;
             } else {
                 // Várias falhas seguidas indicam um problema geral (sem login, sem rede):

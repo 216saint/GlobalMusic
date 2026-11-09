@@ -149,6 +149,11 @@ impl Queue {
         self.now.as_ref()
     }
 
+    /// `previous` levaria a outra faixa? (Na primeira, sem repetição, ele só fica onde está.)
+    pub fn can_go_back(&self) -> bool {
+        self.position.is_some_and(|p| self.now_queued || p > 0 || self.repeat != Repeat::Off)
+    }
+
     /// As próximas `n` faixas (sua fila, depois o contexto), sem andar. Com repetição, o começo da
     /// lista vem depois do fim (para pré-carregar a volta).
     pub fn peek_ahead(&self, n: usize) -> Vec<Track> {

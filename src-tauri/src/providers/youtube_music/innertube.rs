@@ -84,13 +84,14 @@ pub fn parse_lyrics(browse: &Value) -> Option<(String, Option<String>)> {
 }
 
 /// Junta, em ordem, todo objeto que aparece sob a chave `key` em qualquer profundidade.
+/// `counterpart` fica de fora: é a outra versão do mesmo item (o clipe de uma música), não outro item.
 fn collect<'a>(value: &'a Value, key: &str, out: &mut Vec<&'a Value>) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
                 if k == key {
                     out.push(v);
-                } else {
+                } else if k != "counterpart" {
                     collect(v, key, out);
                 }
             }
@@ -383,6 +384,16 @@ mod tests {
         assert_eq!(radio[0].duration_ms, 204_000);
         assert!(radio[0].artwork.is_some());
         assert_eq!(radio[1].artists, ["Canal"], "sem página de artista: o canal");
+    }
+
+    #[test]
+    fn the_radio_takes_the_main_item_and_not_its_counterpart() {
+        let item = |id: &str| json!({ "playlistPanelVideoRenderer": { "videoId": id, "title": { "runs": [{ "text": "Perfect" }] } } });
+        let next = json!({ "contents": [{ "playlistPanelVideoWrapperRenderer": {
+            "primaryRenderer": item("audio"),
+            "counterpart": [{ "counterpartRenderer": item("clipe") }]
+        }}]});
+        assert_eq!(parse_radio(&next, "seed").iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["audio"]);
     }
 
     #[test]

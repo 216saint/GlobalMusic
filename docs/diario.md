@@ -672,6 +672,36 @@ ou ao digitar o Client ID:
 - *Lição:* em Svelte 5, um atributo que a pessoa também muda (`open`, `value`, `checked`) não deve ser
   `attr={expressão}`. Usar `bind:` ou estado próprio.
 
+**"Pulei uma faixa: não achei "Headache" no YouTube"** (conta Spotify Free, faixa "Headache" de
+milkshakes e yen archive):
+- *Investigação:* o log do app instalado (`%LOCALAPPDATA%\com.globalmusic.app\logs`) deu o ID do Spotify.
+  A mesma busca do app ("milkshakes Headache") feita **sem login** traz a música certa, e o nosso
+  resolver dá nota 1,00 para ela (conferido passando a resposta real pelo `parse_tracks` + `score`).
+  No app, a busca vai **logada**, e aí nenhum resultado passou do mínimo. Não deu para ver a resposta
+  logada sem copiar os cookies da conta, então ficou sem prova de *por que* ela veio diferente.
+- *Correção (não depende de saber o porquê):* se a busca normal não achar par, o `youtube_equivalent`
+  tenta **sem login** com o título e todos os artistas, e depois pelo **ISRC** (código da gravação; o
+  YouTube Music acha alguns direto). O mesmo `best_match` filtra, então não toca música errada. Se tudo
+  falhar, o log agora registra os 3 candidatos mais próximos com a nota, para a próxima investigação.
+- Uma busca pela metade (músicas ou vídeos falhando) agora aparece no log em vez de sumir.
+- *Achado junto:* numa playlist, a faixa veio com os artistas num texto só (`"milkshakes, yen archive"`,
+  com espaço não separável). A comparação de artista agora separa por vírgula.
+- *Segundo bug, no mesmo log:* a pessoa voltou para "Headache" ~10 vezes, e cada falha pulava **para a
+  frente**, de volta à música de onde ela vinha. Agora, se a faixa foi aberta pelo "anterior", a falha
+  pula para trás (`Player::skip_failed`). Na primeira da lista, segue para a frente.
+
+**Músicas repetidas na fila de semelhantes:** "Perfect", "Daylily", "So Far So Fake"… apareciam em pares
+vizinhos, com capas diferentes.
+- *Causa provável:* o YouTube Music pode mandar cada item do rádio embrulhado
+  (`playlistPanelVideoWrapperRenderer`), com a música em `primaryRenderer` e o clipe em `counterpart`.
+  O `collect` varre o JSON em qualquer profundidade e pegava os dois, com IDs diferentes, então o filtro
+  por ID não via repetição. A resposta **sem login** nunca vem assim (6 rádios testados); a logada não deu
+  para ver sem copiar cookies. O teste com essa estrutura reproduziu o par do print.
+- *Correção, em duas camadas:* o `collect` ignora `counterpart`, e o `similar_tracks` passa o rádio por
+  `resolver::distinct_songs`, que deixa uma cópia por título + artista (sem contar "Official Video" etc.) e
+  tira a música de partida. Assim o sintoma some mesmo se a causa for outra. "Live" e "Remix" continuam,
+  porque têm outro título.
+
 **Discord:** o ícone ao lado de "Ouvindo GlobalMusic" é decidido pelo próprio Discord. O app já tem ícone
 no Developer Portal (conferido pela API pública), e o protocolo do Rich Presence não tem campo para isso.
 

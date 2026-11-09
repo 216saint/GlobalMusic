@@ -458,11 +458,36 @@ impl Audio {
         if let Some(id) = self.matches.get(&key) {
             return Ok(id);
         }
-        let candidates = self.providers.youtube.search_tracks(&resolver::fallback_query(track), 10).await?;
-        let best = resolver::best_match(track, &candidates)
-            .ok_or_else(|| Error::Other(format!("não achei \"{}\" no YouTube", track.title)))?;
-        self.matches.remember(&key, &best.id);
-        Ok(best.id.clone())
+        let youtube = &self.providers.youtube;
+        let mut candidates = youtube.search_tracks(&resolver::fallback_query(track), 10).await?;
+        if let Some(best) = resolver::best_match(track, &candidates) {
+            self.matches.remember(&key, &best.id);
+            return Ok(best.id.clone());
+        }
+        // Nada parecido o bastante: tenta sem login, com todos os artistas e depois pelo ISRC.
+        for query in resolver::retry_queries(track) {
+            let found = match youtube.search_public(&query, 10).await {
+                Ok(found) => found,
+                Err(e) => {
+                    log::info!("busca extra \"{query}\" falhou: {e}");
+                    continue;
+                }
+            };
+            if let Some(best) = resolver::best_match(track, &found) {
+                log::info!("achei \"{}\" na busca extra \"{query}\"", track.title);
+                self.matches.remember(&key, &best.id);
+                return Ok(best.id.clone());
+            }
+            candidates.extend(found);
+        }
+        candidates.sort_by(|a, b| resolver::score(track, b).total_cmp(&resolver::score(track, a)));
+        let closest: Vec<String> = candidates
+            .iter()
+            .take(3)
+            .map(|c| format!("{:.2} \"{}\" {:?} {} s", resolver::score(track, c), c.title, c.artists, c.duration_ms / 1000))
+            .collect();
+        log::warn!("sem par no YouTube para \"{}\" {:?}; mais perto: {}", track.title, track.artists, closest.join(" | "));
+        Err(Error::Other(format!("não achei \"{}\" no YouTube", track.title)))
     }
 
     /// Versões no YouTube para uma faixa (da mais parecida para a menos) e qual está em uso.

@@ -89,6 +89,27 @@ impl YoutubeMusicProvider {
         Ok(innertube::parse_radio(&next, video_id))
     }
 
+    /// A busca sem login, igual para todo mundo. Para achar a versão no YouTube de uma faixa do
+    /// Spotify: logado, a busca de "milkshakes Headache" não trouxe a música (nov/2026), e a anônima trouxe.
+    pub async fn search_public(&self, query: &str, limit: u32) -> Result<Vec<Track>> {
+        self.search(query, limit, false).await
+    }
+
+    /// "Músicas" e "Vídeos" ao mesmo tempo: muita coisa só existe como vídeo enviado por alguém
+    /// (versões slowed, mashups, remixes de fã) e não aparece no filtro de músicas.
+    async fn search(&self, query: &str, limit: u32, logged_in: bool) -> Result<Vec<Track>> {
+        let search = |filter: &'static str| self.call("search", json!({ "query": query, "params": filter }), logged_in);
+        let (songs, videos) = futures::join!(search(innertube::SONGS_FILTER), search(innertube::VIDEOS_FILTER));
+        let songs = songs.map(|r| innertube::parse_tracks(&r));
+        let videos = videos.map(|r| innertube::parse_tracks(&r));
+        match (&songs, &videos) {
+            (Err(e), Err(_)) => return Err(Error::Other(e.to_string())),
+            (Err(e), Ok(_)) | (Ok(_), Err(e)) => log::warn!("busca no YouTube Music pela metade (logado: {logged_in}): {e}"),
+            _ => {}
+        }
+        Ok(innertube::interleave(songs.unwrap_or_default(), videos.unwrap_or_default(), limit as usize))
+    }
+
     /// Cookies da sessão no formato cookies.txt, para o yt-dlp tocar como a pessoa logada.
     /// `None` sem login (o YouTube tende a recusar com "confirm you're not a bot").
     pub fn ytdlp_cookies(&self) -> Option<String> {
@@ -147,17 +168,7 @@ impl MusicProvider for YoutubeMusicProvider {
 
     async fn search_tracks(&self, query: &str, limit: u32) -> Result<Vec<Track>> {
         // Busca pública: funciona sem conta. Logado, os resultados levam em conta o gosto da pessoa.
-        // "Músicas" e "Vídeos" ao mesmo tempo: muita coisa só existe como vídeo enviado por alguém
-        // (versões slowed, mashups, remixes de fã) e não aparece no filtro de músicas.
-        let logged_in = self.is_logged_in();
-        let search = |filter: &'static str| self.call("search", json!({ "query": query, "params": filter }), logged_in);
-        let (songs, videos) = futures::join!(search(innertube::SONGS_FILTER), search(innertube::VIDEOS_FILTER));
-        let songs = songs.map(|r| innertube::parse_tracks(&r));
-        let videos = videos.map(|r| innertube::parse_tracks(&r));
-        if let (Err(e), Err(_)) = (&songs, &videos) {
-            return Err(Error::Other(e.to_string()));
-        }
-        Ok(innertube::interleave(songs.unwrap_or_default(), videos.unwrap_or_default(), limit as usize))
+        self.search(query, limit, self.is_logged_in()).await
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {

@@ -42,6 +42,9 @@ pub struct Player {
     /// A lista acabou: a última faixa fica parada **no fim** (e não no zero), para "anterior"
     /// recomeçá-la e "tocar" começar de novo do zero.
     ended: bool,
+    /// A faixa atual veio do "anterior": se ela falhar, o pulo continua para trás. (Antes pulava
+    /// para a frente, e voltar para uma faixa quebrada devolvia a pessoa para onde ela estava.)
+    went_back: bool,
     /// Sobe a cada mudança (ver `touch`). Vai no snapshot para a UI descartar um snapshot velho
     /// que chegue depois de um mais novo.
     version: u64,
@@ -58,6 +61,7 @@ impl Default for Player {
             spotify_premium: false,
             consecutive_failures: 0,
             ended: false,
+            went_back: false,
             version: 0,
         }
     }
@@ -199,10 +203,24 @@ impl Player {
     /// estado: com a lista já acabada, trocava a faixa mas ficava mudo.)
     pub fn previous(&mut self) {
         let duration = self.queue.current().map_or(0, |t| t.duration_ms);
-        if self.clock.position_ms(Instant::now(), duration) < RESTART_AFTER_MS {
+        let go_back = self.clock.position_ms(Instant::now(), duration) < RESTART_AFTER_MS;
+        if go_back {
             self.queue.previous();
         }
         self.restart_track(self.queue.current().is_some());
+        self.went_back = go_back;
+    }
+
+    /// A faixa atual não tocou: pula na direção em que a pessoa ia (para trás, se ela veio do
+    /// "anterior" e ainda há uma antes; senão, para a frente).
+    pub fn skip_failed(&mut self) {
+        if self.went_back && self.queue.can_go_back() {
+            self.queue.previous();
+            self.restart_track(true);
+            self.went_back = true;
+        } else {
+            self.next();
+        }
     }
 
     /// Adiciona ao fim da sua fila. Devolve `true` se nada tocava e ela começou a tocar.
@@ -290,6 +308,7 @@ impl Player {
         self.clock = PlaybackClock::default();
         self.loading = play;
         self.ended = false;
+        self.went_back = false;
     }
 
     /// Não há próxima: para, com a última faixa marcando o fim.
@@ -440,6 +459,28 @@ mod tests {
         p.toggle();
         p.previous();
         assert!(p.snapshot().playing);
+    }
+
+    #[test]
+    fn a_broken_song_is_skipped_in_the_direction_you_were_going() {
+        let mut p = Player::default();
+        p.play_queue(queue(4), 3, None);
+        p.previous();
+        p.skip_failed();
+        assert_eq!(p.snapshot().context_index, Some(1), "voltando: a que falhou é pulada para trás");
+
+        p.next();
+        p.skip_failed();
+        assert_eq!(p.snapshot().context_index, Some(3), "avançando: segue para a frente");
+    }
+
+    #[test]
+    fn going_back_past_the_first_song_continues_forward() {
+        let mut p = Player::default();
+        p.play_queue(queue(3), 1, None);
+        p.previous();
+        p.skip_failed();
+        assert_eq!(p.snapshot().context_index, Some(1), "não há anterior à primeira: segue a lista");
     }
 
     #[test]
